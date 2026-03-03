@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 log = logging.getLogger("codehephaestus.loop_prevention")
 
@@ -25,6 +26,7 @@ class LoopPrevention:
         self._window = window_seconds
         self._attempts: dict[str, AttemptRecord] = {}
         self._processed_shas: set[str] = set()
+        self._feedback_cutoffs: dict[str, datetime] = {}
 
     def should_skip(self, issue_key: str) -> bool:
         record = self._attempts.get(issue_key)
@@ -53,3 +55,11 @@ class LoopPrevention:
 
     def mark_sha_processed(self, sha: str) -> None:
         self._processed_shas.add(sha)
+
+    def get_feedback_cutoff(self, issue_key: str) -> datetime | None:
+        """Get the cutoff timestamp — only comments after this are 'new'."""
+        return self._feedback_cutoffs.get(issue_key)
+
+    def mark_feedback_processed(self, issue_key: str) -> None:
+        """Record that we've addressed all feedback up to now."""
+        self._feedback_cutoffs[issue_key] = datetime.now(timezone.utc)

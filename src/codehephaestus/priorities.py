@@ -112,21 +112,27 @@ class PriorityDispatcher:
                 if self._lp.should_skip(issue.key):
                     continue
 
+                cutoff = self._lp.get_feedback_cutoff(issue.key)
+                since_str = cutoff.isoformat() if cutoff else None
+
                 branch = self._tracker.get_issue_branch_name(issue)
                 pr_number = await self._github.find_pr_for_branch(branch)
 
                 all_comments: list[dict[str, str]] = []
 
-                # Check GitHub PR comments
+                # Check GitHub PR comments (only new ones since cutoff)
                 if pr_number:
-                    pr_comments = await self._github.get_pr_comments(pr_number)
+                    pr_comments = await self._github.get_pr_comments(
+                        pr_number, since=since_str
+                    )
                     gh_new = [
                         c for c in pr_comments if not c.author.endswith("[bot]")
                     ]
                     log.info(
-                        "  %s: checking PR #%d for new comments... %d new",
+                        "  %s: checking PR #%d for new comments (since %s)... %d new",
                         issue.key,
                         pr_number,
+                        since_str or "beginning",
                         len(gh_new),
                     )
                     for c in gh_new:
@@ -138,14 +144,19 @@ class PriorityDispatcher:
                             }
                         )
 
-                # Check Jira comments
+                # Check Jira comments (only new ones since cutoff)
                 jira_comments = await self._tracker.get_comments(issue.key)
+                jira_new = [
+                    c for c in jira_comments
+                    if cutoff is None or (c.created and c.created > cutoff)
+                ]
                 log.info(
-                    "  %s: checking Jira comments... %d",
+                    "  %s: checking Jira comments (since %s)... %d new",
                     issue.key,
-                    len(jira_comments),
+                    since_str or "beginning",
+                    len(jira_new),
                 )
-                for c in jira_comments:
+                for c in jira_new:
                     all_comments.append(
                         {
                             "author": c.author,

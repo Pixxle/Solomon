@@ -42,6 +42,7 @@ async def _handle_work_item(
     repo_path = settings.target_repo_path
 
     loop_prevention.record_attempt(issue.key)
+    loop_prevention.mark_feedback_processed(issue.key)
 
     if work.tier == Tier.NEW_ISSUE and not settings.dry_run:
         log.info("%s: transitioning To Do → In Progress", issue.key)
