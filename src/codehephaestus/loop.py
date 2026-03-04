@@ -87,7 +87,7 @@ async def _handle_new_issue(
         log.info("[DRY RUN] Would push branch %s and create PR", branch)
         return
 
-    await github.push_branch(branch)
+    await github.push_branch(branch, cwd=working_dir)
 
     pr_number = await github.find_pr_for_branch(branch)
     if not pr_number:
@@ -180,7 +180,7 @@ async def _handle_review_feedback(
             await cleanup_worktree(branch, repo_path)
             return
 
-        await github.push_branch(branch)
+        await github.push_branch(branch, cwd=working_dir)
         sha_after = await get_current_sha(working_dir)
         loop_prevention.mark_sha_processed(sha_after)
 
@@ -231,7 +231,7 @@ async def _handle_ci_failure(
         log.info("[DRY RUN] Would push CI fix for %s", branch)
         return
 
-    await github.push_branch(branch)
+    await github.push_branch(branch, cwd=working_dir)
 
     sha_after = await get_current_sha(working_dir)
     loop_prevention.mark_sha_processed(sha_after)

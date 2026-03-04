@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     max_iterations: int = Field(default=0, description="0 = infinite")
     tool: str = "claude"
     target_repo_path: str = "."
+    worktree_path: str = ""
 
     # CLI overrides (not from .env)
     dry_run: bool = False

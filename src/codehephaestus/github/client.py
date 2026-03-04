@@ -213,16 +213,17 @@ class GitHubClient:
             )
         log.info("Posted comment on PR #%d", pr_number)
 
-    async def push_branch(self, branch: str) -> None:
+    async def push_branch(self, branch: str, cwd: str | None = None) -> None:
+        working_dir = cwd or self._cwd
         # Pull remote changes first to avoid rejected pushes
         rc, _, _ = await _run(
             ["git", "pull", "--rebase", "origin", branch],
-            cwd=self._cwd,
+            cwd=working_dir,
         )
         if rc != 0:
             log.debug("Pull --rebase failed for %s (may not exist on remote yet)", branch)
         await _run_ok(
             ["git", "push", "--set-upstream", "origin", branch],
-            cwd=self._cwd,
+            cwd=working_dir,
         )
         log.info("Pushed %s to origin", branch)
