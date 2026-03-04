@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class TaskTrackerType(str, Enum):
     JIRA = "jira"
+    LINEAR = "linear"
 
 
 class Settings(BaseSettings):
@@ -30,6 +31,36 @@ class Settings(BaseSettings):
     jira_status_in_progress: str = "In Progress"
     jira_status_in_review: str = "In Review"
     jira_status_done: str = "Done"
+
+    # Linear status mapping
+    linear_status_todo: str = "Todo"
+    linear_status_in_progress: str = "In Progress"
+    linear_status_in_review: str = "In Review"
+    linear_status_done: str = "Done"
+
+    @property
+    def status_todo(self) -> str:
+        if self.task_tracker == TaskTrackerType.LINEAR:
+            return self.linear_status_todo
+        return self.jira_status_todo
+
+    @property
+    def status_in_progress(self) -> str:
+        if self.task_tracker == TaskTrackerType.LINEAR:
+            return self.linear_status_in_progress
+        return self.jira_status_in_progress
+
+    @property
+    def status_in_review(self) -> str:
+        if self.task_tracker == TaskTrackerType.LINEAR:
+            return self.linear_status_in_review
+        return self.jira_status_in_review
+
+    @property
+    def status_done(self) -> str:
+        if self.task_tracker == TaskTrackerType.LINEAR:
+            return self.linear_status_done
+        return self.jira_status_done
 
     poll_interval: int = 120
     max_iterations: int = Field(default=0, description="0 = infinite")

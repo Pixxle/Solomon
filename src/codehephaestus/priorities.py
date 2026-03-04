@@ -43,7 +43,7 @@ class PriorityDispatcher:
         """Housekeeping: transition merged PRs to Done."""
         log.info("Checking for merged PRs...")
         issues = []
-        for status in (self._settings.jira_status_in_review, self._settings.jira_status_in_progress):
+        for status in (self._settings.status_in_review, self._settings.status_in_progress):
             issues.extend(await self._tracker.fetch_issues_by_status(status))
         for issue in issues:
             branch = self._tracker.get_issue_branch_name(issue)
@@ -55,14 +55,14 @@ class PriorityDispatcher:
                     issue.key,
                 )
                 await self._tracker.transition_issue(
-                    issue.key, self._settings.jira_status_done
+                    issue.key, self._settings.status_done
                 )
 
     async def check_ci_passed(self) -> None:
         """Housekeeping: transition In Progress issues to In Review when CI passes."""
         log.info("Checking for CI-passing PRs...")
         issues = await self._tracker.fetch_issues_by_status(
-            self._settings.jira_status_in_progress
+            self._settings.status_in_progress
         )
         for issue in issues:
             branch = self._tracker.get_issue_branch_name(issue)
@@ -75,10 +75,10 @@ class PriorityDispatcher:
                     "PR #%d for %s: CI passed → transitioning to %s",
                     pr_number,
                     issue.key,
-                    self._settings.jira_status_in_review,
+                    self._settings.status_in_review,
                 )
                 await self._tracker.transition_issue(
-                    issue.key, self._settings.jira_status_in_review
+                    issue.key, self._settings.status_in_review
                 )
 
     async def find_next_work_item(self) -> WorkItem | None:
@@ -102,8 +102,8 @@ class PriorityDispatcher:
     async def _check_review_feedback(self) -> WorkItem | None:
         log.info("Checking Priority 1: review feedback...")
         for status in (
-            self._settings.jira_status_in_review,
-            self._settings.jira_status_in_progress,
+            self._settings.status_in_review,
+            self._settings.status_in_progress,
         ):
             issues = await self._tracker.fetch_issues_by_status(status)
             log.info("  Fetching '%s' issues... found %d", status, len(issues))
@@ -159,8 +159,8 @@ class PriorityDispatcher:
     async def _check_ci_failures(self) -> WorkItem | None:
         log.info("Checking Priority 2: CI failures...")
         for status in (
-            self._settings.jira_status_in_progress,
-            self._settings.jira_status_in_review,
+            self._settings.status_in_progress,
+            self._settings.status_in_review,
         ):
             issues = await self._tracker.fetch_issues_by_status(status)
             for issue in issues:
@@ -190,7 +190,7 @@ class PriorityDispatcher:
     async def _check_new_issues(self) -> WorkItem | None:
         log.info("Checking Priority 3: new To Do issues...")
         issues = await self._tracker.fetch_issues_by_status(
-            self._settings.jira_status_todo
+            self._settings.status_todo
         )
         log.info("  Found %d To Do issues", len(issues))
 

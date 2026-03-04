@@ -21,7 +21,7 @@ log = logging.getLogger("codehephaestus.loop")
 
 
 async def boot(settings: Settings, tracker: TaskTracker, github: GitHubClient) -> None:
-    log.info("Validating Jira connection to %s...", settings.tracker_base_url)
+    log.info("Validating tracker connection...")
     await tracker.validate_connection()
 
     username = await github.validate_auth()
@@ -36,14 +36,14 @@ async def _handle_new_issue(
     github: GitHubClient,
     loop_prevention: LoopPrevention,
 ) -> None:
-    """Handle a To Do ticket: plan, implement, post plan as Jira comment, create PR."""
+    """Handle a To Do ticket: plan, implement, post plan as tracker comment, create PR."""
     issue = work.issue
     branch = tracker.get_issue_branch_name(issue)
     repo_path = settings.target_repo_path
 
     if not settings.dry_run:
         log.info("%s: transitioning To Do → In Progress", issue.key)
-        await tracker.transition_issue(issue.key, settings.jira_status_in_progress)
+        await tracker.transition_issue(issue.key, settings.status_in_progress)
     else:
         log.info("[DRY RUN] Would transition %s To Do → In Progress", issue.key)
 
@@ -79,9 +79,9 @@ async def _handle_new_issue(
         plan_content = plan_path.read_text().strip()
         if plan_content:
             await tracker.add_comment(issue.key, plan_content)
-            log.info("%s: posted implementation plan as Jira comment", issue.key)
+            log.info("%s: posted implementation plan as tracker comment", issue.key)
     elif settings.dry_run:
-        log.info("[DRY RUN] Would post plan to Jira for %s", issue.key)
+        log.info("[DRY RUN] Would post plan to tracker for %s", issue.key)
 
     if settings.dry_run:
         log.info("[DRY RUN] Would push branch %s and create PR", branch)
@@ -157,9 +157,9 @@ async def _handle_review_feedback(
 
     # Handle code changes (thumbs_up) — make changes and push
     if address_comments:
-        if issue.status == settings.jira_status_in_review:
+        if issue.status == settings.status_in_review:
             log.info("%s: transitioning In Review → In Progress", issue.key)
-            await tracker.transition_issue(issue.key, settings.jira_status_in_progress)
+            await tracker.transition_issue(issue.key, settings.status_in_progress)
 
         prompt = render_prompt(
             "address_changes.md.j2",
