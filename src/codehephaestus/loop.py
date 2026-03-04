@@ -51,7 +51,7 @@ async def _handle_new_issue(
         log.info("[DRY RUN] Would create worktree for branch %s", branch)
         working_dir = repo_path
     else:
-        working_dir = await ensure_worktree(branch, repo_path)
+        working_dir = await ensure_worktree(branch, repo_path, settings.worktree_path)
 
     prompt = render_prompt(
         "build_feature.md.j2",
@@ -70,7 +70,7 @@ async def _handle_new_issue(
     if exit_code != 0:
         log.warning("%s: tool failed (exit=%d), skipping push", issue.key, exit_code)
         if not settings.dry_run:
-            await cleanup_worktree(branch, repo_path)
+            await cleanup_worktree(branch, repo_path, settings.worktree_path)
         return
 
     # Post the plan file as a Jira comment (if it was created by the AI)
@@ -100,7 +100,7 @@ async def _handle_new_issue(
 
     sha_after = await get_current_sha(working_dir)
     loop_prevention.mark_sha_processed(sha_after)
-    await cleanup_worktree(branch, repo_path)
+    await cleanup_worktree(branch, repo_path, settings.worktree_path)
 
 
 async def _handle_review_feedback(
@@ -127,7 +127,7 @@ async def _handle_review_feedback(
         return
 
     # Create worktree once for both operations
-    working_dir = await ensure_worktree(branch, repo_path)
+    working_dir = await ensure_worktree(branch, repo_path, settings.worktree_path)
 
     # Handle questions (eyes) — no code changes, just post answers
     if question_comments:
@@ -177,14 +177,14 @@ async def _handle_review_feedback(
 
         if exit_code != 0:
             log.warning("%s: tool failed (exit=%d), skipping push", issue.key, exit_code)
-            await cleanup_worktree(branch, repo_path)
+            await cleanup_worktree(branch, repo_path, settings.worktree_path)
             return
 
         await github.push_branch(branch, cwd=working_dir)
         sha_after = await get_current_sha(working_dir)
         loop_prevention.mark_sha_processed(sha_after)
 
-    await cleanup_worktree(branch, repo_path)
+    await cleanup_worktree(branch, repo_path, settings.worktree_path)
 
 
 async def _handle_ci_failure(
@@ -204,7 +204,7 @@ async def _handle_ci_failure(
         log.info("[DRY RUN] Would create worktree for branch %s", branch)
         working_dir = repo_path
     else:
-        working_dir = await ensure_worktree(branch, repo_path)
+        working_dir = await ensure_worktree(branch, repo_path, settings.worktree_path)
 
     prompt = render_prompt(
         "fix_ci.md.j2",
@@ -224,7 +224,7 @@ async def _handle_ci_failure(
     if exit_code != 0:
         log.warning("%s: tool failed (exit=%d), skipping push", issue.key, exit_code)
         if not settings.dry_run:
-            await cleanup_worktree(branch, repo_path)
+            await cleanup_worktree(branch, repo_path, settings.worktree_path)
         return
 
     if settings.dry_run:
@@ -235,7 +235,7 @@ async def _handle_ci_failure(
 
     sha_after = await get_current_sha(working_dir)
     loop_prevention.mark_sha_processed(sha_after)
-    await cleanup_worktree(branch, repo_path)
+    await cleanup_worktree(branch, repo_path, settings.worktree_path)
 
 
 async def _handle_work_item(

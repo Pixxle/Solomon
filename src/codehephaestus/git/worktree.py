@@ -60,13 +60,15 @@ async def update_main(repo_path: str) -> None:
         log.warning("Could not fast-forward %s (may have local commits)", default_branch)
 
 
-async def ensure_worktree(branch: str, repo_path: str) -> str:
+async def ensure_worktree(branch: str, repo_path: str, worktree_path: str = "") -> str:
     """Create a git worktree for the branch. Returns the worktree path.
 
     Uses worktrees so the main repo working tree stays on its current branch.
     New branches are created from HEAD (which should be up-to-date main after update_main).
+    If worktree_path is set, worktrees are created there instead of inside the repo.
     """
-    wt_dir = Path(repo_path) / ".worktrees" / branch.replace("/", "_")
+    base = Path(worktree_path) if worktree_path else Path(repo_path) / ".worktrees"
+    wt_dir = base / branch.replace("/", "_")
     if wt_dir.exists():
         # Worktree exists — pull latest for the branch
         log.info("Worktree already exists at %s, pulling latest...", wt_dir)
@@ -106,9 +108,10 @@ async def ensure_worktree(branch: str, repo_path: str) -> str:
     return str(wt_dir)
 
 
-async def cleanup_worktree(branch: str, repo_path: str) -> None:
+async def cleanup_worktree(branch: str, repo_path: str, worktree_path: str = "") -> None:
     """Remove a worktree after work is done."""
-    wt_dir = Path(repo_path) / ".worktrees" / branch.replace("/", "_")
+    base = Path(worktree_path) if worktree_path else Path(repo_path) / ".worktrees"
+    wt_dir = base / branch.replace("/", "_")
     if wt_dir.exists():
         await _run(["git", "worktree", "remove", str(wt_dir), "--force"], cwd=repo_path)
         log.info("Cleaned up worktree at %s", wt_dir)
