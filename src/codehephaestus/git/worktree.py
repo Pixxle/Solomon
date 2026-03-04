@@ -79,6 +79,9 @@ async def ensure_worktree(branch: str, repo_path: str, worktree_path: str = "") 
 
     wt_dir.parent.mkdir(parents=True, exist_ok=True)
 
+    # Prune stale worktree references (e.g. from a previous worktree location)
+    await _run_quiet(["git", "worktree", "prune"], cwd=repo_path)
+
     # Check if branch already exists (locally or on remote)
     rc, _ = await _run_quiet(["git", "rev-parse", "--verify", branch], cwd=repo_path)
     if rc == 0:
