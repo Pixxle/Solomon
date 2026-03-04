@@ -201,11 +201,19 @@ class GitHubClient:
         return pr_number
 
     async def post_pr_comment(self, pr_number: int, body: str) -> None:
-        """Post a comment on a PR."""
-        await _run_ok(
-            ["gh", "pr", "comment", str(pr_number), "--body", body],
+        """Post a comment on a PR. Uses --body-file to avoid shell truncation."""
+        proc = await asyncio.create_subprocess_exec(
+            "gh", "pr", "comment", str(pr_number), "--body-file", "-",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             cwd=self._cwd,
         )
+        _, stderr = await proc.communicate(input=body.encode())
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"gh pr comment failed (rc={proc.returncode}): {stderr.decode().strip()}"
+            )
         log.info("Posted comment on PR #%d", pr_number)
 
     async def push_branch(self, branch: str) -> None:
