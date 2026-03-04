@@ -40,6 +40,7 @@ class PRComment:
 class GitHubClient:
     def __init__(self, repo_path: str) -> None:
         self._cwd = repo_path
+        self._username: str | None = None
 
     async def validate_auth(self) -> str:
         """Return the authenticated GitHub username."""
@@ -49,7 +50,8 @@ class GitHubClient:
         user_out = await _run_ok(
             ["gh", "api", "/user", "--jq", ".login"], cwd=self._cwd
         )
-        return user_out.strip()
+        self._username = user_out.strip()
+        return self._username
 
     async def find_pr_for_branch(self, branch: str) -> int | None:
         rc, out, _ = await _run(
@@ -85,6 +87,8 @@ class GitHubClient:
                 c = json.loads(line)
                 if since and c["created_at"] <= since:
                     continue
+                if c["author"] == self._username or c["author"].endswith("[bot]"):
+                    continue
                 comments.append(
                     PRComment(
                         id=c["id"], author=c["author"], body=c["body"], created_at=c["created_at"]
@@ -111,7 +115,7 @@ class GitHubClient:
                 c = json.loads(line)
                 if since and c["created_at"] <= since:
                     continue
-                if c["author"].endswith("[bot]"):
+                if c["author"] == self._username or c["author"].endswith("[bot]"):
                     continue
                 comments.append(
                     PRComment(
