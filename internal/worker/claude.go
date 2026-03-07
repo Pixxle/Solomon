@@ -111,9 +111,49 @@ func RunClaudeAgentTeam(ctx context.Context, prompt, workingDir, model string, t
 	}, nil
 }
 
-// RunClaudeQuick runs a quick claude --print call for yes/no classification.
+// RunClaudeText runs a claude --print session for pure text generation (no tool use).
+// Used for planning, PR descriptions, answering questions — anything that doesn't need
+// to read/edit files or run commands.
+func RunClaudeText(ctx context.Context, prompt, workingDir, model string) (*ClaudeResult, error) {
+	args := []string{"--print", "--max-turns", "1"}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+
+	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd.Dir = workingDir
+	cmd.Stdin = strings.NewReader(prompt)
+	cmd.Env = append(os.Environ(), "PUSHOVER_ENABLED=false")
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	log.Debug().
+		Str("model", model).
+		Str("cwd", workingDir).
+		Int("prompt_len", len(prompt)).
+		Msg("launching claude text session")
+
+	err := cmd.Run()
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			return nil, fmt.Errorf("running claude text: %w", err)
+		}
+	}
+
+	return &ClaudeResult{
+		ExitCode: exitCode,
+		Output:   stdout.String(),
+	}, nil
+}
+
+// RunClaudeQuick runs a quick claude --print call for yes/no classification (no tool use).
 func RunClaudeQuick(ctx context.Context, prompt, model string) (string, error) {
-	args := []string{"--dangerously-skip-permissions", "--print"}
+	args := []string{"--print", "--max-turns", "1"}
 	if model != "" {
 		args = append(args, "--model", model)
 	}

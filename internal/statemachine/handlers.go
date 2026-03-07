@@ -269,7 +269,7 @@ func (h *Handlers) transitionToImplementation(ctx context.Context, issue tracker
 		return fmt.Errorf("building PR description prompt: %w", err)
 	}
 
-	prDescResult, err := worker.RunClaude(ctx, prDescPrompt, wtDir, h.m.cfg.TeammateModel)
+	prDescResult, err := worker.RunClaudeText(ctx, prDescPrompt, wtDir, h.m.cfg.TeammateModel)
 	if err != nil {
 		return fmt.Errorf("generating PR description: %w", err)
 	}
@@ -315,7 +315,7 @@ func (h *Handlers) answerQuestion(ctx context.Context, issue tracker.Issue, prNu
 		return err
 	}
 
-	result, err := worker.RunClaude(ctx, prompt, h.m.cfg.TargetRepoPath, h.m.cfg.TeammateModel)
+	result, err := worker.RunClaudeText(ctx, prompt, h.m.cfg.TargetRepoPath, h.m.cfg.TeammateModel)
 	if err != nil {
 		return err
 	}

@@ -1,5 +1,7 @@
 You are {{.BotDisplayName}}. The planning conversation for issue {{.IssueKey}} is complete.
 
+IMPORTANT: Do NOT delegate work to subagents or spawn agent teams. You must produce the updated description yourself directly. You may read files in the codebase to understand the project structure, but respond with your analysis directly.
+
 ## Issue: {{.IssueKey}}
 **Title:** {{.IssueTitle}}
 
@@ -45,4 +47,4 @@ Generate the updated issue description that will replace the original. Use this 
 Preserve the original description verbatim in the "Original Request" section.
 Synthesize all decisions from the conversation into a clear, complete specification.
 
-Output ONLY the description content (no code fences wrapping it).
+CRITICAL: Your entire text output will be used verbatim as the Jira issue description. Do NOT include any preamble, explanation, thinking, or meta-commentary. Start your output directly with "## Original Request". Nothing before it.

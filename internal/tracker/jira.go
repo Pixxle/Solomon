@@ -446,26 +446,318 @@ func extractADFText(raw json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
-// textToADF converts plain text/markdown to minimal Atlassian Document Format.
+// textToADF converts markdown-like text to Atlassian Document Format.
 func textToADF(text string) map[string]interface{} {
 	lines := strings.Split(text, "\n")
 	var content []interface{}
-	for _, line := range lines {
-		content = append(content, map[string]interface{}{
-			"type": "paragraph",
-			"content": []interface{}{
-				map[string]interface{}{
-					"type": "text",
-					"text": line,
-				},
-			},
-		})
+	i := 0
+	for i < len(lines) {
+		line := lines[i]
+
+		// Horizontal rule
+		if strings.TrimSpace(line) == "---" {
+			content = append(content, adfRule())
+			i++
+			continue
+		}
+
+		// Headings
+		if level, heading := parseHeading(line); level > 0 {
+			content = append(content, adfHeading(level, heading))
+			i++
+			continue
+		}
+
+		// Table block
+		if strings.HasPrefix(strings.TrimSpace(line), "|") && strings.HasSuffix(strings.TrimSpace(line), "|") {
+			var tableLines []string
+			for i < len(lines) {
+				trimmed := strings.TrimSpace(lines[i])
+				if !strings.HasPrefix(trimmed, "|") || !strings.HasSuffix(trimmed, "|") {
+					break
+				}
+				tableLines = append(tableLines, lines[i])
+				i++
+			}
+			if node := adfTable(tableLines); node != nil {
+				content = append(content, node)
+			}
+			continue
+		}
+
+		// Bullet list / task list block
+		if isBulletLine(line) {
+			var items []interface{}
+			for i < len(lines) && isBulletLine(lines[i]) {
+				itemText := stripBullet(lines[i])
+				if checked, isTask := parseTaskItem(itemText); isTask {
+					items = append(items, adfTaskItem(checked, checked_text(itemText)))
+				} else {
+					items = append(items, adfListItem(itemText))
+				}
+				i++
+			}
+			// Use taskList if all items are tasks, otherwise bulletList
+			allTasks := true
+			for _, item := range items {
+				m := item.(map[string]interface{})
+				if m["type"] != "taskItem" {
+					allTasks = false
+					break
+				}
+			}
+			if allTasks {
+				content = append(content, map[string]interface{}{
+					"type":    "taskList",
+					"attrs":   map[string]interface{}{"localId": ""},
+					"content": items,
+				})
+			} else {
+				content = append(content, map[string]interface{}{
+					"type":    "bulletList",
+					"content": items,
+				})
+			}
+			continue
+		}
+
+		// Numbered list block
+		if isNumberedLine(line) {
+			var items []interface{}
+			for i < len(lines) && isNumberedLine(lines[i]) {
+				itemText := stripNumbered(lines[i])
+				items = append(items, adfListItem(itemText))
+				i++
+			}
+			content = append(content, map[string]interface{}{
+				"type":    "orderedList",
+				"content": items,
+			})
+			continue
+		}
+
+		// Empty line → skip (don't create empty paragraphs)
+		if strings.TrimSpace(line) == "" {
+			i++
+			continue
+		}
+
+		// Regular paragraph
+		content = append(content, adfParagraph(line))
+		i++
 	}
+
+	if len(content) == 0 {
+		content = append(content, adfParagraph(""))
+	}
+
 	return map[string]interface{}{
 		"version": 1,
 		"type":    "doc",
 		"content": content,
 	}
+}
+
+func parseHeading(line string) (int, string) {
+	trimmed := strings.TrimSpace(line)
+	level := 0
+	for _, c := range trimmed {
+		if c == '#' {
+			level++
+		} else {
+			break
+		}
+	}
+	if level >= 1 && level <= 6 && len(trimmed) > level && trimmed[level] == ' ' {
+		return level, strings.TrimSpace(trimmed[level+1:])
+	}
+	return 0, ""
+}
+
+func adfHeading(level int, text string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":    "heading",
+		"attrs":   map[string]interface{}{"level": level},
+		"content": adfInlineMarkdown(text),
+	}
+}
+
+func adfParagraph(text string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":    "paragraph",
+		"content": adfInlineMarkdown(text),
+	}
+}
+
+func adfRule() map[string]interface{} {
+	return map[string]interface{}{"type": "rule"}
+}
+
+func adfListItem(text string) map[string]interface{} {
+	return map[string]interface{}{
+		"type": "listItem",
+		"content": []interface{}{
+			map[string]interface{}{
+				"type":    "paragraph",
+				"content": adfInlineMarkdown(text),
+			},
+		},
+	}
+}
+
+func adfTaskItem(checked bool, text string) map[string]interface{} {
+	state := "TODO"
+	if checked {
+		state = "DONE"
+	}
+	return map[string]interface{}{
+		"type":  "taskItem",
+		"attrs": map[string]interface{}{"localId": "", "state": state},
+		"content": adfInlineMarkdown(text),
+	}
+}
+
+var (
+	bulletRe   = regexp.MustCompile(`^\s*[-*]\s+`)
+	numberedRe = regexp.MustCompile(`^\s*\d+\.\s+`)
+	taskRe     = regexp.MustCompile(`^\[[ xX]\]\s*`)
+)
+
+func isBulletLine(line string) bool  { return bulletRe.MatchString(line) }
+func isNumberedLine(line string) bool { return numberedRe.MatchString(line) }
+
+func stripBullet(line string) string {
+	return strings.TrimSpace(bulletRe.ReplaceAllString(line, ""))
+}
+
+func stripNumbered(line string) string {
+	return strings.TrimSpace(numberedRe.ReplaceAllString(line, ""))
+}
+
+func parseTaskItem(text string) (checked bool, isTask bool) {
+	if strings.HasPrefix(text, "[ ] ") || strings.HasPrefix(text, "[ ]") {
+		return false, true
+	}
+	if strings.HasPrefix(text, "[x] ") || strings.HasPrefix(text, "[X] ") ||
+		strings.HasPrefix(text, "[x]") || strings.HasPrefix(text, "[X]") {
+		return true, true
+	}
+	return false, false
+}
+
+func checked_text(text string) string {
+	return strings.TrimSpace(taskRe.ReplaceAllString(text, ""))
+}
+
+// adfInlineMarkdown parses **bold** and `code` within a text string.
+func adfInlineMarkdown(text string) []interface{} {
+	var nodes []interface{}
+	for len(text) > 0 {
+		// Bold
+		if idx := strings.Index(text, "**"); idx >= 0 {
+			end := strings.Index(text[idx+2:], "**")
+			if end >= 0 {
+				if idx > 0 {
+					nodes = append(nodes, adfText(text[:idx], nil))
+				}
+				nodes = append(nodes, adfText(text[idx+2:idx+2+end], []interface{}{
+					map[string]interface{}{"type": "strong"},
+				}))
+				text = text[idx+2+end+2:]
+				continue
+			}
+		}
+		// Inline code
+		if idx := strings.Index(text, "`"); idx >= 0 {
+			end := strings.Index(text[idx+1:], "`")
+			if end >= 0 {
+				if idx > 0 {
+					nodes = append(nodes, adfText(text[:idx], nil))
+				}
+				nodes = append(nodes, adfText(text[idx+1:idx+1+end], []interface{}{
+					map[string]interface{}{"type": "code"},
+				}))
+				text = text[idx+1+end+1:]
+				continue
+			}
+		}
+		// Plain text remainder
+		nodes = append(nodes, adfText(text, nil))
+		break
+	}
+	if len(nodes) == 0 {
+		nodes = append(nodes, adfText("", nil))
+	}
+	return nodes
+}
+
+func adfText(text string, marks []interface{}) map[string]interface{} {
+	node := map[string]interface{}{
+		"type": "text",
+		"text": text,
+	}
+	if len(marks) > 0 {
+		node["marks"] = marks
+	}
+	return node
+}
+
+func adfTable(lines []string) map[string]interface{} {
+	if len(lines) < 2 {
+		return nil
+	}
+	// Check if second line is separator (|---|---|)
+	isSep := func(line string) bool {
+		cells := splitTableRow(line)
+		for _, c := range cells {
+			trimmed := strings.TrimSpace(c)
+			if trimmed != "" && strings.Trim(trimmed, "-:") != "" {
+				return false
+			}
+		}
+		return true
+	}
+
+	hasHeader := len(lines) >= 2 && isSep(lines[1])
+	var rows []interface{}
+
+	for i, line := range lines {
+		if hasHeader && i == 1 {
+			continue // skip separator
+		}
+		cells := splitTableRow(line)
+		isHeader := hasHeader && i == 0
+		var cellNodes []interface{}
+		for _, cell := range cells {
+			cellType := "tableCell"
+			if isHeader {
+				cellType = "tableHeader"
+			}
+			cellNodes = append(cellNodes, map[string]interface{}{
+				"type": cellType,
+				"content": []interface{}{
+					adfParagraph(strings.TrimSpace(cell)),
+				},
+			})
+		}
+		rows = append(rows, map[string]interface{}{
+			"type":    "tableRow",
+			"content": cellNodes,
+		})
+	}
+
+	return map[string]interface{}{
+		"type":    "table",
+		"attrs":   map[string]interface{}{"isNumberColumnEnabled": false, "layout": "default"},
+		"content": rows,
+	}
+}
+
+func splitTableRow(line string) []string {
+	trimmed := strings.TrimSpace(line)
+	trimmed = strings.TrimPrefix(trimmed, "|")
+	trimmed = strings.TrimSuffix(trimmed, "|")
+	return strings.Split(trimmed, "|")
 }
 
 var nonAlphanumeric = regexp.MustCompile(`[^a-z0-9]+`)
