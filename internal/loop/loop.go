@@ -53,7 +53,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 
 		iteration++
-		log.Info().Int("iteration", iteration).Msg("starting iteration")
+		log.Debug().Int("iteration", iteration).Msg("starting iteration")
 
 		if err := r.runIteration(ctx); err != nil {
 			log.Error().Err(err).Msg("iteration error")
