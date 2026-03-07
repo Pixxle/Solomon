@@ -1,0 +1,300 @@
+package db
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	_ "github.com/mattn/go-sqlite3"
+)
+
+type StateDB struct {
+	db *sql.DB
+}
+
+type PlanningState struct {
+	IssueKey            string
+	ConversationJSON    string
+	ParticipantsJSON    string
+	Status              string
+	OriginalDescription string
+	FigmaURLsJSON       string
+	ImageRefsJSON       string
+	LastHumanResponseAt *time.Time
+	LastSystemCommentAt *time.Time
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}
+
+type PRFeedbackRecord struct {
+	ID          int64
+	IssueKey    string
+	PRNumber    int
+	CommentID   string
+	CommentType string
+	ActionTaken string
+	CommitSHA   *string
+	ProcessedAt time.Time
+	CreatedAt   time.Time
+}
+
+func Open(dbPath string) (*StateDB, error) {
+	dir := filepath.Dir(dbPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating state db directory: %w", err)
+	}
+
+	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_synchronous=NORMAL")
+	if err != nil {
+		return nil, fmt.Errorf("opening state db: %w", err)
+	}
+
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("connecting to state db: %w", err)
+	}
+
+	s := &StateDB{db: db}
+	if err := s.migrate(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("running migrations: %w", err)
+	}
+
+	return s, nil
+}
+
+func (s *StateDB) Close() error {
+	return s.db.Close()
+}
+
+func (s *StateDB) migrate() error {
+	var version int
+	err := s.db.QueryRow("SELECT version FROM schema_version LIMIT 1").Scan(&version)
+	if err != nil {
+		// Table doesn't exist yet, run all migrations
+		for _, m := range migrations {
+			if _, err := s.db.Exec(m); err != nil {
+				return fmt.Errorf("running migration: %w", err)
+			}
+		}
+		return nil
+	}
+
+	// Run any migrations newer than current version
+	for i := version; i < len(migrations); i++ {
+		if _, err := s.db.Exec(migrations[i]); err != nil {
+			return fmt.Errorf("running migration %d: %w", i+1, err)
+		}
+		if _, err := s.db.Exec("UPDATE schema_version SET version = ?", i+1); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Planning State operations
+
+func (s *StateDB) GetPlanningState(issueKey string) (*PlanningState, error) {
+	row := s.db.QueryRow(`SELECT issue_key, conversation_json, participants_json, status,
+		original_description, figma_urls_json, image_refs_json,
+		last_human_response_at, last_system_comment_at, created_at, updated_at
+		FROM planning_state WHERE issue_key = ?`, issueKey)
+
+	ps := &PlanningState{}
+	var lastHuman, lastSystem, created, updated sql.NullString
+	err := row.Scan(&ps.IssueKey, &ps.ConversationJSON, &ps.ParticipantsJSON, &ps.Status,
+		&ps.OriginalDescription, &ps.FigmaURLsJSON, &ps.ImageRefsJSON,
+		&lastHuman, &lastSystem, &created, &updated)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	ps.CreatedAt = parseTime(created.String)
+	ps.UpdatedAt = parseTime(updated.String)
+	if lastHuman.Valid {
+		t := parseTime(lastHuman.String)
+		ps.LastHumanResponseAt = &t
+	}
+	if lastSystem.Valid {
+		t := parseTime(lastSystem.String)
+		ps.LastSystemCommentAt = &t
+	}
+
+	return ps, nil
+}
+
+func (s *StateDB) InsertPlanningState(ps *PlanningState) error {
+	now := timeStr(time.Now().UTC())
+	_, err := s.db.Exec(`INSERT INTO planning_state
+		(issue_key, conversation_json, participants_json, status, original_description,
+		figma_urls_json, image_refs_json, last_human_response_at, last_system_comment_at,
+		created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ps.IssueKey, ps.ConversationJSON, ps.ParticipantsJSON, ps.Status,
+		ps.OriginalDescription, ps.FigmaURLsJSON, ps.ImageRefsJSON,
+		nullTimeStr(ps.LastHumanResponseAt), nullTimeStr(ps.LastSystemCommentAt),
+		now, now)
+	return err
+}
+
+func (s *StateDB) UpdatePlanningState(ps *PlanningState) error {
+	now := timeStr(time.Now().UTC())
+	_, err := s.db.Exec(`UPDATE planning_state SET
+		conversation_json = ?, participants_json = ?, status = ?,
+		figma_urls_json = ?, image_refs_json = ?,
+		last_human_response_at = ?, last_system_comment_at = ?,
+		updated_at = ?
+		WHERE issue_key = ?`,
+		ps.ConversationJSON, ps.ParticipantsJSON, ps.Status,
+		ps.FigmaURLsJSON, ps.ImageRefsJSON,
+		nullTimeStr(ps.LastHumanResponseAt), nullTimeStr(ps.LastSystemCommentAt),
+		now, ps.IssueKey)
+	return err
+}
+
+func (s *StateDB) GetActivePlanningStates() ([]*PlanningState, error) {
+	rows, err := s.db.Query(`SELECT issue_key, conversation_json, participants_json, status,
+		original_description, figma_urls_json, image_refs_json,
+		last_human_response_at, last_system_comment_at, created_at, updated_at
+		FROM planning_state WHERE status = 'active'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []*PlanningState
+	for rows.Next() {
+		ps := &PlanningState{}
+		var lastHuman, lastSystem, created, updated sql.NullString
+		if err := rows.Scan(&ps.IssueKey, &ps.ConversationJSON, &ps.ParticipantsJSON, &ps.Status,
+			&ps.OriginalDescription, &ps.FigmaURLsJSON, &ps.ImageRefsJSON,
+			&lastHuman, &lastSystem, &created, &updated); err != nil {
+			return nil, err
+		}
+		ps.CreatedAt = parseTime(created.String)
+		ps.UpdatedAt = parseTime(updated.String)
+		if lastHuman.Valid {
+			t := parseTime(lastHuman.String)
+			ps.LastHumanResponseAt = &t
+		}
+		if lastSystem.Valid {
+			t := parseTime(lastSystem.String)
+			ps.LastSystemCommentAt = &t
+		}
+		result = append(result, ps)
+	}
+	return result, rows.Err()
+}
+
+func (s *StateDB) GetPlanningParticipants(issueKey string) ([]string, error) {
+	ps, err := s.GetPlanningState(issueKey)
+	if err != nil || ps == nil {
+		return nil, err
+	}
+	var participants []string
+	if err := json.Unmarshal([]byte(ps.ParticipantsJSON), &participants); err != nil {
+		return nil, err
+	}
+	return participants, nil
+}
+
+// PR Feedback operations
+
+func (s *StateDB) IsCommentProcessed(commentID string) (bool, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM pr_feedback_state WHERE comment_id = ?", commentID).Scan(&count)
+	return count > 0, err
+}
+
+func (s *StateDB) InsertPRFeedback(rec *PRFeedbackRecord) error {
+	now := timeStr(time.Now().UTC())
+	_, err := s.db.Exec(`INSERT INTO pr_feedback_state
+		(issue_key, pr_number, comment_id, comment_type, action_taken, commit_sha, processed_at, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		rec.IssueKey, rec.PRNumber, rec.CommentID, rec.CommentType,
+		rec.ActionTaken, rec.CommitSHA, now, rec.CreatedAt.Format(time.RFC3339))
+	return err
+}
+
+// SHA tracking
+
+func (s *StateDB) IsSHAProcessed(sha string) (bool, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM processed_shas WHERE sha = ?", sha).Scan(&count)
+	return count > 0, err
+}
+
+func (s *StateDB) MarkSHAProcessed(sha string) error {
+	_, err := s.db.Exec("INSERT OR IGNORE INTO processed_shas (sha, processed_at) VALUES (?, ?)",
+		sha, timeStr(time.Now().UTC()))
+	return err
+}
+
+// Feedback cutoffs
+
+func (s *StateDB) GetFeedbackCutoff(issueKey string) (time.Time, error) {
+	var cutoff string
+	err := s.db.QueryRow("SELECT cutoff_utc FROM feedback_cutoffs WHERE issue_key = ?", issueKey).Scan(&cutoff)
+	if err == sql.ErrNoRows {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	return parseTime(cutoff), nil
+}
+
+func (s *StateDB) SetFeedbackCutoff(issueKey string, cutoff time.Time) error {
+	_, err := s.db.Exec(`INSERT INTO feedback_cutoffs (issue_key, cutoff_utc) VALUES (?, ?)
+		ON CONFLICT(issue_key) DO UPDATE SET cutoff_utc = ?`,
+		issueKey, timeStr(cutoff), timeStr(cutoff))
+	return err
+}
+
+// Attempt tracking
+
+func (s *StateDB) RecordAttempt(issueKey string) error {
+	_, err := s.db.Exec("INSERT INTO attempt_records (issue_key, attempted_at) VALUES (?, ?)",
+		issueKey, timeStr(time.Now().UTC()))
+	return err
+}
+
+func (s *StateDB) CountRecentAttempts(issueKey string, window time.Duration) (int, error) {
+	cutoff := timeStr(time.Now().UTC().Add(-window))
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM attempt_records WHERE issue_key = ? AND attempted_at > ?",
+		issueKey, cutoff).Scan(&count)
+	return count, err
+}
+
+func (s *StateDB) PruneOldRecords(olderThan time.Duration) error {
+	cutoff := timeStr(time.Now().UTC().Add(-olderThan))
+	_, err := s.db.Exec("DELETE FROM attempt_records WHERE attempted_at < ?", cutoff)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec("DELETE FROM processed_shas WHERE processed_at < ?", cutoff)
+	return err
+}
+
+func timeStr(t time.Time) string {
+	return t.UTC().Format(time.RFC3339)
+}
+
+func parseTime(s string) time.Time {
+	t, _ := time.Parse(time.RFC3339, s)
+	return t
+}
+
+func nullTimeStr(t *time.Time) interface{} {
+	if t == nil {
+		return nil
+	}
+	return timeStr(*t)
+}
