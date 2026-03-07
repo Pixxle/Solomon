@@ -1,0 +1,21 @@
+UAT checks have failed for issue {{.IssueKey}}. Fix the failures.
+
+## Failed Checks
+{{.Failures}}
+
+## Current Diff
+{{.Diff}}
+
+{{if .Spec}}
+## Specification
+{{.Spec}}
+{{end}}
+
+## Instructions
+
+1. Analyze each failure
+2. Make targeted fixes — do NOT refactor unrelated code
+3. Commit each fix with a clear message referencing {{.IssueKey}}
+4. Re-run the failing checks locally to verify the fix before finishing
+
+Focus on fixing the UAT failures, nothing else.

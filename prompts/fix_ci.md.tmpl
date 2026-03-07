@@ -1,0 +1,22 @@
+CI has failed for issue {{.IssueKey}}. Diagnose and fix the failure.
+
+## CI Output
+{{.CIOutput}}
+
+## Current Diff
+{{.Diff}}
+
+{{if .Spec}}
+## Specification
+{{.Spec}}
+{{end}}
+
+## Instructions
+
+1. Analyze the CI failure output
+2. Identify the root cause
+3. Make targeted fixes — do NOT refactor unrelated code
+4. Commit each fix with a clear message referencing {{.IssueKey}}
+5. Run the relevant tests locally to verify the fix before finishing
+
+Focus on fixing the CI failure, nothing else.
