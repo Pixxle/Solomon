@@ -146,6 +146,89 @@ func TestGetActivePlanningStates(t *testing.T) {
 	}
 }
 
+func TestGetAllPlanningStates(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Now().UTC()
+
+	statuses := map[string]string{"ALL-1": "active", "ALL-2": "complete", "ALL-3": "timed_out"}
+	for key, status := range statuses {
+		if err := db.InsertPlanningState(&PlanningState{
+			IssueKey:            key,
+			ConversationJSON:    "[]",
+			ParticipantsJSON:    "[]",
+			Status:              status,
+			OriginalDescription: "",
+			FigmaURLsJSON:       "[]",
+			ImageRefsJSON:       "[]",
+			CreatedAt:           now,
+			UpdatedAt:           now,
+			LastSeenDescription: "",
+			QuestionsJSON:       "[]",
+		}); err != nil {
+			t.Fatalf("InsertPlanningState(%s) error: %v", key, err)
+		}
+	}
+
+	all, err := db.GetAllPlanningStates()
+	if err != nil {
+		t.Fatalf("GetAllPlanningStates() error: %v", err)
+	}
+	if len(all) != 3 {
+		t.Errorf("GetAllPlanningStates() returned %d, want 3", len(all))
+	}
+
+	// Verify each status is present
+	found := make(map[string]string)
+	for _, ps := range all {
+		found[ps.IssueKey] = ps.Status
+	}
+	for key, want := range statuses {
+		if got, ok := found[key]; !ok {
+			t.Errorf("missing issue %s", key)
+		} else if got != want {
+			t.Errorf("issue %s status = %q, want %q", key, got, want)
+		}
+	}
+}
+
+func TestDeletePlanningState(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Now().UTC()
+
+	if err := db.InsertPlanningState(&PlanningState{
+		IssueKey:            "DEL-1",
+		ConversationJSON:    "[]",
+		ParticipantsJSON:    "[]",
+		Status:              "active",
+		OriginalDescription: "",
+		FigmaURLsJSON:       "[]",
+		ImageRefsJSON:       "[]",
+		CreatedAt:           now,
+		UpdatedAt:           now,
+		LastSeenDescription: "",
+		QuestionsJSON:       "[]",
+	}); err != nil {
+		t.Fatalf("InsertPlanningState() error: %v", err)
+	}
+
+	if err := db.DeletePlanningState("DEL-1"); err != nil {
+		t.Fatalf("DeletePlanningState() error: %v", err)
+	}
+
+	got, err := db.GetPlanningState("DEL-1")
+	if err != nil {
+		t.Fatalf("GetPlanningState() after delete error: %v", err)
+	}
+	if got != nil {
+		t.Error("expected nil after delete")
+	}
+
+	// Deleting non-existent key is a no-op
+	if err := db.DeletePlanningState("NOPE-99"); err != nil {
+		t.Fatalf("DeletePlanningState(non-existent) error: %v", err)
+	}
+}
+
 func TestSHAProcessed(t *testing.T) {
 	db := openTestDB(t)
 

@@ -16,13 +16,14 @@ import (
 )
 
 type PriorityDispatcher struct {
-	cfg           *config.Config
-	tracker       tracker.TaskTracker
-	github        *ghclient.Client
-	stateDB       *db.StateDB
-	loopPrev      *LoopPrevention
-	botUserID     string
-	lastDoneCheck time.Time
+	cfg                *config.Config
+	tracker            tracker.TaskTracker
+	github             *ghclient.Client
+	stateDB            *db.StateDB
+	loopPrev           *LoopPrevention
+	botUserID          string
+	lastDoneCheck      time.Time
+	lastReconcileCheck time.Time
 }
 
 func NewPriorityDispatcher(cfg *config.Config, t tracker.TaskTracker, gh *ghclient.Client, stateDB *db.StateDB, lp *LoopPrevention, botUserID string) *PriorityDispatcher {
@@ -39,9 +40,15 @@ func NewPriorityDispatcher(cfg *config.Config, t tracker.TaskTracker, gh *ghclie
 // FindWork returns the highest-priority work item, or nil if there's nothing to do.
 func (pd *PriorityDispatcher) FindWork(ctx context.Context) (*statemachine.WorkItem, error) {
 	// Pre-fetch shared data to avoid duplicate API calls.
-	activePlans, err := pd.stateDB.GetActivePlanningStates()
+	allStates, err := pd.stateDB.GetAllPlanningStates()
 	if err != nil {
-		log.Warn().Err(err).Msg("error fetching active planning states")
+		log.Warn().Err(err).Msg("error fetching planning states")
+	}
+	var activePlans []*db.PlanningState
+	for _, ps := range allStates {
+		if ps.Status == planning.StatusActive {
+			activePlans = append(activePlans, ps)
+		}
 	}
 	todoIssues, err := pd.tracker.FetchIssuesByStatus(ctx, pd.cfg.StatusTodo())
 	if err != nil {
@@ -50,6 +57,12 @@ func (pd *PriorityDispatcher) FindWork(ctx context.Context) (*statemachine.WorkI
 	todoMap := make(map[string]tracker.Issue)
 	for _, i := range todoIssues {
 		todoMap[i.Key] = i
+	}
+
+	// Reconcile tracker state periodically (every 5 minutes, not every poll cycle).
+	if time.Since(pd.lastReconcileCheck) >= 5*time.Minute {
+		pd.reconcileTrackerState(ctx, allStates, todoMap)
+		pd.lastReconcileCheck = time.Now()
 	}
 
 	// Record done tickets periodically (every 10 minutes, not every poll cycle).
@@ -304,5 +317,39 @@ func (pd *PriorityDispatcher) recordDoneTickets(ctx context.Context) {
 			continue
 		}
 		log.Info().Str("issue", issue.Key).Msg("recorded pre-existing done ticket as complete")
+	}
+}
+
+// reconcileTrackerState detects when humans move tickets on the tracker board
+// and fixes stale bot state. Two rules:
+//   - Rule 1: Issue is in TODO but has a non-active planning_state → reopened.
+//     Delete old state + bot comment so planning starts fresh.
+//   - Rule 2: Issue is NOT in TODO but has an active planning_state → moved out.
+//     Mark planning complete (stale).
+func (pd *PriorityDispatcher) reconcileTrackerState(ctx context.Context, allStates []*db.PlanningState, todoMap map[string]tracker.Issue) {
+	for _, ps := range allStates {
+		_, inTodo := todoMap[ps.IssueKey]
+
+		if inTodo && ps.Status != planning.StatusActive {
+			// Rule 1: reopened ticket — clear old state so it starts fresh.
+			if ps.BotCommentID != "" {
+				if err := pd.tracker.DeleteComment(ctx, ps.IssueKey, ps.BotCommentID); err != nil {
+					log.Warn().Err(err).Str("issue", ps.IssueKey).Msg("reconcile: failed to delete old bot comment (best-effort)")
+				}
+			}
+			if err := pd.stateDB.DeletePlanningState(ps.IssueKey); err != nil {
+				log.Error().Err(err).Str("issue", ps.IssueKey).Msg("reconcile: failed to delete planning state")
+				continue
+			}
+			log.Info().Str("issue", ps.IssueKey).Str("old_status", ps.Status).Msg("reconcile: cleared stale state for reopened ticket")
+		} else if !inTodo && ps.Status == planning.StatusActive {
+			// Rule 2: moved out of TODO — mark planning complete.
+			ps.Status = planning.StatusComplete
+			if err := pd.stateDB.UpdatePlanningState(ps); err != nil {
+				log.Error().Err(err).Str("issue", ps.IssueKey).Msg("reconcile: failed to mark planning complete")
+				continue
+			}
+			log.Info().Str("issue", ps.IssueKey).Msg("reconcile: marked active planning as complete (ticket moved out of TODO)")
+		}
 	}
 }

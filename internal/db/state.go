@@ -180,11 +180,25 @@ func (s *StateDB) UpdatePlanningState(ps *PlanningState) error {
 }
 
 func (s *StateDB) GetActivePlanningStates() ([]*PlanningState, error) {
-	rows, err := s.db.Query(`SELECT issue_key, conversation_json, participants_json, status,
+	return s.queryPlanningStates("WHERE status = 'active'")
+}
+
+func (s *StateDB) DeletePlanningState(issueKey string) error {
+	_, err := s.db.Exec("DELETE FROM planning_state WHERE issue_key = ?", issueKey)
+	return err
+}
+
+func (s *StateDB) GetAllPlanningStates() ([]*PlanningState, error) {
+	return s.queryPlanningStates("")
+}
+
+func (s *StateDB) queryPlanningStates(whereClause string) ([]*PlanningState, error) {
+	query := `SELECT issue_key, conversation_json, participants_json, status,
 		original_description, figma_urls_json, image_refs_json,
 		last_human_response_at, last_system_comment_at, created_at, updated_at,
 		bot_comment_id, last_seen_description, questions_json
-		FROM planning_state WHERE status = 'active'`)
+		FROM planning_state ` + whereClause
+	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, err
 	}

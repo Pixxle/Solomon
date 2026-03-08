@@ -46,9 +46,8 @@ type Config struct {
 	PlanningModel string
 
 	// Planning
-	PlanningCommentCooldown int
-	PlanningReminderDays    int
-	PlanningTimeoutAction   string
+	PlanningReminderDays  int
+	PlanningTimeoutAction string
 
 	// Figma
 	FigmaAccessToken  string
@@ -111,9 +110,8 @@ func Load(envPath string) (*Config, error) {
 		TeammateModel: envOrDefault("TEAMMATE_MODEL", "sonnet"),
 		PlanningModel: envOrDefault("PLANNING_MODEL", "sonnet"),
 
-		PlanningCommentCooldown: envOrDefaultInt("PLANNING_COMMENT_COOLDOWN", 300),
-		PlanningReminderDays:    envOrDefaultInt("PLANNING_REMINDER_DAYS", 7),
-		PlanningTimeoutAction:   envOrDefault("PLANNING_TIMEOUT_ACTION", "remind"),
+		PlanningReminderDays:  envOrDefaultInt("PLANNING_REMINDER_DAYS", 7),
+		PlanningTimeoutAction: envOrDefault("PLANNING_TIMEOUT_ACTION", "remind"),
 
 		FigmaAccessToken:  os.Getenv("FIGMA_ACCESS_TOKEN"),
 		FigmaExportScale:  envOrDefaultInt("FIGMA_EXPORT_SCALE", 2),

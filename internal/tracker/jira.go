@@ -296,6 +296,23 @@ func (j *JiraTracker) UpdateComment(ctx context.Context, issueKey, commentID, bo
 	return nil
 }
 
+func (j *JiraTracker) DeleteComment(ctx context.Context, issueKey, commentID string) error {
+	req, err := j.newRequest(ctx, "DELETE", fmt.Sprintf("/rest/api/3/issue/%s/comment/%s", issueKey, commentID), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := j.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("deleting comment failed (status %d): %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
 func (j *JiraTracker) AttachFile(ctx context.Context, issueKey string, filePath string) error {
 	file, err := os.Open(filePath)
 	if err != nil {

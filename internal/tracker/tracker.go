@@ -17,6 +17,7 @@ type TaskTracker interface {
 	AddComment(ctx context.Context, issueKey string, body string) error
 	AddCommentReturningID(ctx context.Context, issueKey, body string) (string, error)
 	UpdateComment(ctx context.Context, issueKey, commentID, body string) error
+	DeleteComment(ctx context.Context, issueKey, commentID string) error
 	AttachFile(ctx context.Context, issueKey string, filePath string) error
 	GetCommentReactions(ctx context.Context, issueKey string, commentID string) ([]Reaction, error)
 	UpdateDescription(ctx context.Context, issueKey string, description string, attachments []Attachment) error
