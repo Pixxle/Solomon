@@ -55,7 +55,10 @@ func RenderPrompt(templateName string, data interface{}) (string, error) {
 		return "", fmt.Errorf("reading template %s: %w", templateName, err)
 	}
 
-	tmpl, err := template.New(templateName).Parse(string(tmplData))
+	funcMap := template.FuncMap{
+		"add": func(a, b int) int { return a + b },
+	}
+	tmpl, err := template.New(templateName).Funcs(funcMap).Parse(string(tmplData))
 	if err != nil {
 		return "", fmt.Errorf("parsing template %s: %w", templateName, err)
 	}

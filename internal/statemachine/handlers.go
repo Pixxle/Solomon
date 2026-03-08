@@ -200,8 +200,7 @@ func (h *Handlers) CheckCIPassed(ctx context.Context) {
 func (h *Handlers) transitionToImplementation(ctx context.Context, issue tracker.Issue, ps *db.PlanningState) error {
 	log.Info().Str("issue", issue.Key).Msg("transitioning to implementation")
 
-	participants, err := h.m.planner.CompletePlanning(ctx, issue, ps)
-	if err != nil {
+	if err := h.m.planner.CompletePlanning(ctx, issue, ps); err != nil {
 		return fmt.Errorf("completing planning: %w", err)
 	}
 
@@ -218,20 +217,17 @@ func (h *Handlers) transitionToImplementation(ctx context.Context, issue tracker
 	}
 	defer git.CleanupWorktree(ctx, branch, h.m.cfg.TargetRepoPath, h.m.cfg.WorktreePath)
 
-	comments, _ := h.m.tracker.GetComments(ctx, issue.Key)
-	conversationText := tracker.FormatConversation(comments, "")
-
 	var imagePaths []string
 	_ = json.Unmarshal([]byte(ps.ImageRefsJSON), &imagePaths)
 
+	// The description IS the spec — no need to build conversation text
 	teamPrompt, err := team.BuildTeamLeadPrompt(team.TeamLeadContext{
-		IssueKey:             issue.Key,
-		IssueTitle:           issue.Title,
-		Specification:        issue.Description,
-		PlanningConversation: conversationText,
-		BotDisplayName:       h.m.cfg.BotDisplayName,
-		ImagePaths:           imagePaths,
-		MaxReviewRounds:      h.m.cfg.MaxReviewRounds,
+		IssueKey:        issue.Key,
+		IssueTitle:      issue.Title,
+		Specification:   issue.Description,
+		BotDisplayName:  h.m.cfg.BotDisplayName,
+		ImagePaths:      imagePaths,
+		MaxReviewRounds: h.m.cfg.MaxReviewRounds,
 	})
 	if err != nil {
 		return fmt.Errorf("building team lead prompt: %w", err)
@@ -258,8 +254,8 @@ func (h *Handlers) transitionToImplementation(ctx context.Context, issue tracker
 	diff, _ := git.DiffFromMain(ctx, wtDir)
 	commitLog, _ := git.CommitLogFromMain(ctx, wtDir)
 	prDescPrompt, err := team.BuildPRDescriptionPrompt(
-		issue.Key, issue.Title, ps.OriginalDescription,
-		conversationText, diff, commitLog, h.m.cfg.BotDisplayName,
+		issue.Key, issue.Title, issue.Description,
+		"", diff, commitLog, h.m.cfg.BotDisplayName,
 	)
 	if err != nil {
 		return fmt.Errorf("building PR description prompt: %w", err)
@@ -276,23 +272,6 @@ func (h *Handlers) transitionToImplementation(ctx context.Context, issue tracker
 		return fmt.Errorf("creating PR: %w", err)
 	}
 	log.Info().Str("issue", issue.Key).Int("pr", prNumber).Msg("created draft PR")
-
-	if len(participants) > 0 {
-		var ghUsernames []string
-		for _, p := range participants {
-			ghUser := h.m.github.ResolveGitHubUsername(ctx, p)
-			if ghUser != "" {
-				ghUsernames = append(ghUsernames, ghUser)
-			} else {
-				log.Warn().Str("tracker_user", p).Msg("could not map tracker user to GitHub username, skipping reviewer")
-			}
-		}
-		if len(ghUsernames) > 0 {
-			if err := h.m.github.AddReviewers(ctx, prNumber, ghUsernames); err != nil {
-				log.Warn().Err(err).Msg("failed to add reviewers")
-			}
-		}
-	}
 
 	sha, _ := git.GetCurrentSHA(ctx, wtDir)
 	if sha != "" {

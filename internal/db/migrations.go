@@ -1,6 +1,6 @@
 package db
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 var migrations = [][]string{
 	// v1: Initial schema - each statement separate for SQLite compatibility
@@ -49,5 +49,11 @@ var migrations = [][]string{
 			version INTEGER NOT NULL
 		)`,
 		`INSERT INTO schema_version (version) VALUES (1)`,
+	},
+	// v2: Description-centric planning flow
+	{
+		`ALTER TABLE planning_state ADD COLUMN bot_comment_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE planning_state ADD COLUMN last_seen_description TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE planning_state ADD COLUMN questions_json TEXT NOT NULL DEFAULT '[]'`,
 	},
 }

@@ -2,7 +2,6 @@ package db
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,6 +26,9 @@ type PlanningState struct {
 	LastSystemCommentAt *time.Time
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+	BotCommentID        string
+	LastSeenDescription string
+	QuestionsJSON       string
 }
 
 type PRFeedbackRecord struct {
@@ -104,14 +106,16 @@ func (s *StateDB) migrate() error {
 func (s *StateDB) GetPlanningState(issueKey string) (*PlanningState, error) {
 	row := s.db.QueryRow(`SELECT issue_key, conversation_json, participants_json, status,
 		original_description, figma_urls_json, image_refs_json,
-		last_human_response_at, last_system_comment_at, created_at, updated_at
+		last_human_response_at, last_system_comment_at, created_at, updated_at,
+		bot_comment_id, last_seen_description, questions_json
 		FROM planning_state WHERE issue_key = ?`, issueKey)
 
 	ps := &PlanningState{}
 	var lastHuman, lastSystem, created, updated sql.NullString
 	err := row.Scan(&ps.IssueKey, &ps.ConversationJSON, &ps.ParticipantsJSON, &ps.Status,
 		&ps.OriginalDescription, &ps.FigmaURLsJSON, &ps.ImageRefsJSON,
-		&lastHuman, &lastSystem, &created, &updated)
+		&lastHuman, &lastSystem, &created, &updated,
+		&ps.BotCommentID, &ps.LastSeenDescription, &ps.QuestionsJSON)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -138,12 +142,12 @@ func (s *StateDB) InsertPlanningState(ps *PlanningState) error {
 	_, err := s.db.Exec(`INSERT INTO planning_state
 		(issue_key, conversation_json, participants_json, status, original_description,
 		figma_urls_json, image_refs_json, last_human_response_at, last_system_comment_at,
-		created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		created_at, updated_at, bot_comment_id, last_seen_description, questions_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ps.IssueKey, ps.ConversationJSON, ps.ParticipantsJSON, ps.Status,
 		ps.OriginalDescription, ps.FigmaURLsJSON, ps.ImageRefsJSON,
 		nullTimeStr(ps.LastHumanResponseAt), nullTimeStr(ps.LastSystemCommentAt),
-		now, now)
+		now, now, ps.BotCommentID, ps.LastSeenDescription, ps.QuestionsJSON)
 	return err
 }
 
@@ -153,19 +157,23 @@ func (s *StateDB) UpdatePlanningState(ps *PlanningState) error {
 		conversation_json = ?, participants_json = ?, status = ?,
 		figma_urls_json = ?, image_refs_json = ?,
 		last_human_response_at = ?, last_system_comment_at = ?,
-		updated_at = ?
+		updated_at = ?,
+		bot_comment_id = ?, last_seen_description = ?, questions_json = ?
 		WHERE issue_key = ?`,
 		ps.ConversationJSON, ps.ParticipantsJSON, ps.Status,
 		ps.FigmaURLsJSON, ps.ImageRefsJSON,
 		nullTimeStr(ps.LastHumanResponseAt), nullTimeStr(ps.LastSystemCommentAt),
-		now, ps.IssueKey)
+		now,
+		ps.BotCommentID, ps.LastSeenDescription, ps.QuestionsJSON,
+		ps.IssueKey)
 	return err
 }
 
 func (s *StateDB) GetActivePlanningStates() ([]*PlanningState, error) {
 	rows, err := s.db.Query(`SELECT issue_key, conversation_json, participants_json, status,
 		original_description, figma_urls_json, image_refs_json,
-		last_human_response_at, last_system_comment_at, created_at, updated_at
+		last_human_response_at, last_system_comment_at, created_at, updated_at,
+		bot_comment_id, last_seen_description, questions_json
 		FROM planning_state WHERE status = 'active'`)
 	if err != nil {
 		return nil, err
@@ -178,7 +186,8 @@ func (s *StateDB) GetActivePlanningStates() ([]*PlanningState, error) {
 		var lastHuman, lastSystem, created, updated sql.NullString
 		if err := rows.Scan(&ps.IssueKey, &ps.ConversationJSON, &ps.ParticipantsJSON, &ps.Status,
 			&ps.OriginalDescription, &ps.FigmaURLsJSON, &ps.ImageRefsJSON,
-			&lastHuman, &lastSystem, &created, &updated); err != nil {
+			&lastHuman, &lastSystem, &created, &updated,
+			&ps.BotCommentID, &ps.LastSeenDescription, &ps.QuestionsJSON); err != nil {
 			return nil, err
 		}
 		ps.CreatedAt = parseTime(created.String)
@@ -194,18 +203,6 @@ func (s *StateDB) GetActivePlanningStates() ([]*PlanningState, error) {
 		result = append(result, ps)
 	}
 	return result, rows.Err()
-}
-
-func (s *StateDB) GetPlanningParticipants(issueKey string) ([]string, error) {
-	ps, err := s.GetPlanningState(issueKey)
-	if err != nil || ps == nil {
-		return nil, err
-	}
-	var participants []string
-	if err := json.Unmarshal([]byte(ps.ParticipantsJSON), &participants); err != nil {
-		return nil, err
-	}
-	return participants, nil
 }
 
 // PR Feedback operations

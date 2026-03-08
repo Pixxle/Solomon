@@ -5,8 +5,10 @@ You are running as part of {{.BotDisplayName}}, an autonomous coding agent. You 
 ## Specification
 {{.Specification}}
 
+{{if .PlanningConversation}}
 ## Planning Conversation
 {{.PlanningConversation}}
+{{end}}
 
 {{if .AcceptanceCriteria}}
 ## Acceptance Criteria

@@ -3,7 +3,6 @@ package tracker
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/pixxle/codehephaestus/internal/config"
 )
@@ -15,8 +14,9 @@ type TaskTracker interface {
 	TransitionIssue(ctx context.Context, issueKey string, toStatus string) error
 	GetIssueBranchName(issue Issue, botSlug string) string
 	GetComments(ctx context.Context, issueKey string) ([]Comment, error)
-	GetCommentsSince(ctx context.Context, issueKey string, since time.Time) ([]Comment, error)
 	AddComment(ctx context.Context, issueKey string, body string) error
+	AddCommentReturningID(ctx context.Context, issueKey, body string) (string, error)
+	UpdateComment(ctx context.Context, issueKey, commentID, body string) error
 	AttachFile(ctx context.Context, issueKey string, filePath string) error
 	GetCommentReactions(ctx context.Context, issueKey string, commentID string) ([]Reaction, error)
 	UpdateDescription(ctx context.Context, issueKey string, description string, attachments []Attachment) error

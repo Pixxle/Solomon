@@ -237,24 +237,41 @@ func (j *JiraTracker) GetComments(ctx context.Context, issueKey string) ([]Comme
 	return comments, nil
 }
 
-func (j *JiraTracker) GetCommentsSince(ctx context.Context, issueKey string, since time.Time) ([]Comment, error) {
-	all, err := j.GetComments(ctx, issueKey)
-	if err != nil {
-		return nil, err
-	}
-	var filtered []Comment
-	for _, c := range all {
-		if c.Created.After(since) {
-			filtered = append(filtered, c)
-		}
-	}
-	return filtered, nil
+func (j *JiraTracker) AddComment(ctx context.Context, issueKey string, body string) error {
+	_, err := j.AddCommentReturningID(ctx, issueKey, body)
+	return err
 }
 
-func (j *JiraTracker) AddComment(ctx context.Context, issueKey string, body string) error {
+func (j *JiraTracker) AddCommentReturningID(ctx context.Context, issueKey, body string) (string, error) {
 	adf := textToADF(body)
 	b, _ := json.Marshal(map[string]interface{}{"body": adf})
 	req, err := j.newRequest(ctx, "POST", fmt.Sprintf("/rest/api/3/issue/%s/comment", issueKey), bytes.NewReader(b))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := j.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("adding comment failed (status %d): %s", resp.StatusCode, string(respBody))
+	}
+	var result struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decoding comment response: %w", err)
+	}
+	return result.ID, nil
+}
+
+func (j *JiraTracker) UpdateComment(ctx context.Context, issueKey, commentID, body string) error {
+	adf := textToADF(body)
+	b, _ := json.Marshal(map[string]interface{}{"body": adf})
+	req, err := j.newRequest(ctx, "PUT", fmt.Sprintf("/rest/api/3/issue/%s/comment/%s", issueKey, commentID), bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
@@ -266,7 +283,7 @@ func (j *JiraTracker) AddComment(ctx context.Context, issueKey string, body stri
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("adding comment failed (status %d): %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("updating comment failed (status %d): %s", resp.StatusCode, string(respBody))
 	}
 	return nil
 }

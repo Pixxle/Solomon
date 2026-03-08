@@ -11,6 +11,7 @@ import (
 	"github.com/pixxle/codehephaestus/internal/config"
 	"github.com/pixxle/codehephaestus/internal/db"
 	ghclient "github.com/pixxle/codehephaestus/internal/github"
+	"github.com/pixxle/codehephaestus/internal/planning"
 	"github.com/pixxle/codehephaestus/internal/statemachine"
 	"github.com/pixxle/codehephaestus/internal/tracker"
 )
@@ -87,7 +88,7 @@ func (pd *PriorityDispatcher) FindWork(ctx context.Context) (*statemachine.WorkI
 	return nil, nil
 }
 
-func (pd *PriorityDispatcher) checkPlanningConversations(ctx context.Context, activePlans []*db.PlanningState, todoMap map[string]tracker.Issue) (*statemachine.WorkItem, error) {
+func (pd *PriorityDispatcher) checkPlanningConversations(_ context.Context, activePlans []*db.PlanningState, todoMap map[string]tracker.Issue) (*statemachine.WorkItem, error) {
 	for _, ps := range activePlans {
 		issue, ok := todoMap[ps.IssueKey]
 		if !ok {
@@ -97,27 +98,15 @@ func (pd *PriorityDispatcher) checkPlanningConversations(ctx context.Context, ac
 			continue
 		}
 
-		if ps.LastSystemCommentAt != nil {
-			comments, err := pd.tracker.GetCommentsSince(ctx, issue.Key, *ps.LastSystemCommentAt)
-			if err != nil {
-				continue
-			}
-			hasHumanComment := false
-			for _, c := range comments {
-				if c.Author != pd.botUserID {
-					hasHumanComment = true
-					break
-				}
-			}
-			if hasHumanComment {
-				return &statemachine.WorkItem{
-					State: statemachine.StatePlanning,
-					Issue: issue,
-					Context: map[string]interface{}{
-						"planning_state": ps,
-					},
-				}, nil
-			}
+		// Trigger when the description has changed since last analysis
+		if planning.DescriptionChanged(issue.Description, ps.LastSeenDescription) {
+			return &statemachine.WorkItem{
+				State: statemachine.StatePlanning,
+				Issue: issue,
+				Context: map[string]interface{}{
+					"planning_state": ps,
+				},
+			}, nil
 		}
 	}
 
@@ -221,50 +210,46 @@ func (pd *PriorityDispatcher) checkPlanningReady(ctx context.Context, activePlan
 		if pd.loopPrev.ShouldSkip(issue.Key) {
 			continue
 		}
-		if ps.LastSystemCommentAt == nil {
-			continue
-		}
-
-		allComments, err := pd.tracker.GetComments(ctx, issue.Key)
-		if err != nil {
-			continue
-		}
 
 		// Check for keyword-based ready signal in human comments since last system comment
-		for _, c := range allComments {
-			if c.Author == pd.botUserID || !c.Created.After(*ps.LastSystemCommentAt) {
-				continue
+		if ps.LastSystemCommentAt != nil {
+			allComments, err := pd.tracker.GetComments(ctx, issue.Key)
+			if err != nil {
+				log.Warn().Err(err).Str("issue", issue.Key).Msg("failed to fetch comments for ready check")
 			}
-			lower := strings.ToLower(c.Body)
-			if strings.Contains(lower, "ready") || strings.Contains(lower, "lgtm") || strings.Contains(lower, "approved") {
-				return &statemachine.WorkItem{
-					State: statemachine.StatePlanningReady,
-					Issue: issue,
-					Context: map[string]interface{}{
-						"planning_state": ps,
-					},
-				}, nil
+			if err == nil {
+				for _, c := range allComments {
+					if c.Author == pd.botUserID || !c.Created.After(*ps.LastSystemCommentAt) {
+						continue
+					}
+					lower := strings.ToLower(c.Body)
+					if strings.Contains(lower, "ready") || strings.Contains(lower, "lgtm") || strings.Contains(lower, "approved") {
+						return &statemachine.WorkItem{
+							State: statemachine.StatePlanningReady,
+							Issue: issue,
+							Context: map[string]interface{}{
+								"planning_state": ps,
+							},
+						}, nil
+					}
+				}
 			}
 		}
 
-		// Check thumbs_up reaction on last system comment
-		for _, c := range allComments {
-			if c.Author != pd.botUserID || !c.Created.Equal(*ps.LastSystemCommentAt) {
-				continue
-			}
-			reactions, err := pd.tracker.GetCommentReactions(ctx, issue.Key, c.ID)
-			if err != nil {
-				continue
-			}
-			for _, r := range reactions {
-				if r.Type == "thumbs_up" && r.UserID != pd.botUserID {
-					return &statemachine.WorkItem{
-						State: statemachine.StatePlanningReady,
-						Issue: issue,
-						Context: map[string]interface{}{
-							"planning_state": ps,
-						},
-					}, nil
+		// Check thumbs_up reaction on the bot's comment directly by ID
+		if ps.BotCommentID != "" {
+			reactions, err := pd.tracker.GetCommentReactions(ctx, issue.Key, ps.BotCommentID)
+			if err == nil {
+				for _, r := range reactions {
+					if r.Type == "thumbs_up" && r.UserID != pd.botUserID {
+						return &statemachine.WorkItem{
+							State: statemachine.StatePlanningReady,
+							Issue: issue,
+							Context: map[string]interface{}{
+								"planning_state": ps,
+							},
+						}, nil
+					}
 				}
 			}
 		}

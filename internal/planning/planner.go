@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -16,6 +17,18 @@ import (
 	"github.com/pixxle/codehephaestus/internal/figma"
 	"github.com/pixxle/codehephaestus/internal/tracker"
 	"github.com/pixxle/codehephaestus/internal/worker"
+)
+
+// DescriptionChanged reports whether the issue description differs from the last analyzed version.
+func DescriptionChanged(current, lastSeen string) bool {
+	return strings.TrimSpace(current) != strings.TrimSpace(lastSeen)
+}
+
+// Planning state status values.
+const (
+	StatusActive   = "active"
+	StatusComplete = "complete"
+	StatusTimedOut = "timed_out"
 )
 
 type Planner struct {
@@ -37,6 +50,7 @@ func NewPlanner(cfg *config.Config, t tracker.TaskTracker, stateDB *db.StateDB, 
 }
 
 // StartPlanning begins the planning conversation for a new issue.
+// Posts a single analysis comment and stores its ID for in-place updates.
 func (p *Planner) StartPlanning(ctx context.Context, issue tracker.Issue) error {
 	log.Info().Str("issue", issue.Key).Msg("starting planning conversation")
 
@@ -68,78 +82,64 @@ func (p *Planner) StartPlanning(ctx context.Context, issue tracker.Issue) error 
 		return fmt.Errorf("running planning claude: %w", err)
 	}
 
-	// Post the comment
+	// Parse questions from AI output
+	questions := parseQuestions(result.Output)
+	questionsJSON, _ := json.Marshal(questions)
+
+	// Post the comment and capture its ID
+	var botCommentID string
 	if !p.cfg.DryRun {
-		if err := p.tracker.AddComment(ctx, issue.Key, result.Output); err != nil {
+		commentID, err := p.tracker.AddCommentReturningID(ctx, issue.Key, result.Output)
+		if err != nil {
 			return fmt.Errorf("posting planning comment: %w", err)
 		}
+		botCommentID = commentID
 	}
 
 	now := time.Now().UTC()
-	// Insert planning state
 	ps := &db.PlanningState{
 		IssueKey:            issue.Key,
 		ConversationJSON:    "[]",
 		ParticipantsJSON:    "[]",
-		Status:              "active",
+		Status:              StatusActive,
 		OriginalDescription: issue.Description,
 		FigmaURLsJSON:       string(figmaURLsJSON),
 		ImageRefsJSON:       string(imageRefsJSON),
 		LastSystemCommentAt: &now,
 		CreatedAt:           now,
 		UpdatedAt:           now,
+		BotCommentID:        botCommentID,
+		LastSeenDescription: issue.Description,
+		QuestionsJSON:       string(questionsJSON),
 	}
 	if err := p.stateDB.InsertPlanningState(ps); err != nil {
 		return fmt.Errorf("inserting planning state: %w", err)
 	}
 
-	log.Info().Str("issue", issue.Key).Msg("planning conversation started")
+	log.Info().Str("issue", issue.Key).Int("questions", len(questions)).Msg("planning conversation started")
 	return nil
 }
 
-// ContinuePlanning processes new human comments in a planning conversation.
+// ContinuePlanning re-analyzes when the issue description has changed.
+// Updates the bot's comment in-place instead of posting new comments.
 func (p *Planner) ContinuePlanning(ctx context.Context, issue tracker.Issue, ps *db.PlanningState) error {
-	// Get all comments
-	comments, err := p.tracker.GetComments(ctx, issue.Key)
-	if err != nil {
-		return fmt.Errorf("fetching comments: %w", err)
-	}
-
-	// Find new human comments (not from our bot)
-	var newHumanComments []tracker.Comment
-	for _, c := range comments {
-		if c.Author == p.botUserID {
-			continue
-		}
-		if ps.LastSystemCommentAt != nil && c.Created.After(*ps.LastSystemCommentAt) {
-			newHumanComments = append(newHumanComments, c)
-		}
-	}
-
-	if len(newHumanComments) == 0 {
-		return nil // Nothing to respond to
-	}
-
-	// Check cooldown
-	newestComment := newHumanComments[len(newHumanComments)-1]
-	cooldown := time.Duration(p.cfg.PlanningCommentCooldown) * time.Second
-	if time.Since(newestComment.Created) < cooldown {
-		log.Debug().Str("issue", issue.Key).Msg("planning cooldown not elapsed, skipping")
+	// Only act if the description changed
+	if !DescriptionChanged(issue.Description, ps.LastSeenDescription) {
 		return nil
 	}
 
-	// Update participants
-	participants := p.updateParticipants(ps, newHumanComments)
-
-	conversationText := tracker.FormatConversation(comments, p.botUserID)
+	// Load open questions
+	var openQuestions []string
+	_ = json.Unmarshal([]byte(ps.QuestionsJSON), &openQuestions)
 
 	// Generate follow-up via claude
 	prompt, err := worker.RenderPrompt("planning_followup.md.tmpl", map[string]interface{}{
-		"IssueKey":       issue.Key,
-		"IssueTitle":     issue.Title,
-		"Description":    issue.Description,
-		"Conversation":   conversationText,
-		"BotDisplayName": p.cfg.BotDisplayName,
+		"IssueKey":            issue.Key,
+		"IssueTitle":          issue.Title,
+		"PreviousDescription": ps.LastSeenDescription,
+		"CurrentDescription":  issue.Description,
+		"OpenQuestions":        openQuestions,
+		"BotDisplayName":      p.cfg.BotDisplayName,
 	})
 	if err != nil {
 		return fmt.Errorf("rendering follow-up prompt: %w", err)
@@ -150,35 +150,51 @@ func (p *Planner) ContinuePlanning(ctx context.Context, issue tracker.Issue, ps 
 		return fmt.Errorf("running planning follow-up: %w", err)
 	}
 
+	// Parse remaining questions from output
+	remainingQuestions := parseQuestions(result.Output)
+	questionsJSON, _ := json.Marshal(remainingQuestions)
+
+	// Update comment in-place; fallback to new comment if update fails
 	if !p.cfg.DryRun {
-		if err := p.tracker.AddComment(ctx, issue.Key, result.Output); err != nil {
-			return fmt.Errorf("posting follow-up comment: %w", err)
+		if ps.BotCommentID != "" {
+			if err := p.tracker.UpdateComment(ctx, issue.Key, ps.BotCommentID, result.Output); err != nil {
+				log.Warn().Err(err).Str("issue", issue.Key).Msg("failed to update comment, posting new one")
+				newID, postErr := p.tracker.AddCommentReturningID(ctx, issue.Key, result.Output)
+				if postErr != nil {
+					return fmt.Errorf("posting fallback comment: %w", postErr)
+				}
+				ps.BotCommentID = newID
+			}
+		} else {
+			newID, err := p.tracker.AddCommentReturningID(ctx, issue.Key, result.Output)
+			if err != nil {
+				return fmt.Errorf("posting planning comment: %w", err)
+			}
+			ps.BotCommentID = newID
 		}
 	}
 
 	// Update state
 	now := time.Now().UTC()
-	lastHuman := newestComment.Created
-	participantsJSON, _ := json.Marshal(participants)
-	ps.ParticipantsJSON = string(participantsJSON)
-	ps.LastHumanResponseAt = &lastHuman
+	ps.LastSeenDescription = issue.Description
+	ps.QuestionsJSON = string(questionsJSON)
 	ps.LastSystemCommentAt = &now
 	if err := p.stateDB.UpdatePlanningState(ps); err != nil {
 		return fmt.Errorf("updating planning state: %w", err)
 	}
 
-	log.Info().Str("issue", issue.Key).Int("new_comments", len(newHumanComments)).Msg("planning conversation continued")
+	log.Info().Str("issue", issue.Key).Int("remaining_questions", len(remainingQuestions)).Msg("planning comment updated")
 	return nil
 }
 
-// CheckReadySignal detects if a human has signalled readiness.
+// CheckReadySignal detects if a human has signalled readiness via comment or reaction.
 func (p *Planner) CheckReadySignal(ctx context.Context, issue tracker.Issue, ps *db.PlanningState) (bool, error) {
 	comments, err := p.tracker.GetComments(ctx, issue.Key)
 	if err != nil {
 		return false, err
 	}
 
-	// Find new human comments since last system comment
+	// Check for ready keyword in human comments since last system comment
 	for _, c := range comments {
 		if c.Author == p.botUserID {
 			continue
@@ -187,11 +203,9 @@ func (p *Planner) CheckReadySignal(ctx context.Context, issue tracker.Issue, ps 
 			continue
 		}
 
-		// AI-based intent detection
 		isReady, err := p.detectReadyIntent(ctx, c.Body)
 		if err != nil {
 			log.Warn().Err(err).Msg("failed AI ready detection, falling back to keyword match")
-			// Fallback to simple keyword matching
 			isReady = containsReadyKeyword(c.Body)
 		}
 
@@ -200,21 +214,13 @@ func (p *Planner) CheckReadySignal(ctx context.Context, issue tracker.Issue, ps 
 		}
 	}
 
-	// Also check for thumbs_up reaction on the last system comment
-	if ps.LastSystemCommentAt != nil {
-		for _, c := range comments {
-			if c.Author != p.botUserID {
-				continue
-			}
-			// Check if this is the most recent system comment
-			if ps.LastSystemCommentAt != nil && c.Created.Equal(*ps.LastSystemCommentAt) {
-				reactions, err := p.tracker.GetCommentReactions(ctx, issue.Key, c.ID)
-				if err == nil {
-					for _, r := range reactions {
-						if r.Type == "thumbs_up" && r.UserID != p.botUserID {
-							return true, nil
-						}
-					}
+	// Check for thumbs_up reaction on the bot's comment directly by ID
+	if ps.BotCommentID != "" {
+		reactions, err := p.tracker.GetCommentReactions(ctx, issue.Key, ps.BotCommentID)
+		if err == nil {
+			for _, r := range reactions {
+				if r.Type == "thumbs_up" && r.UserID != p.botUserID {
+					return true, nil
 				}
 			}
 		}
@@ -223,80 +229,82 @@ func (p *Planner) CheckReadySignal(ctx context.Context, issue tracker.Issue, ps 
 	return false, nil
 }
 
-// CompletePlanning finalizes the planning phase, updates the description, and returns participants.
-func (p *Planner) CompletePlanning(ctx context.Context, issue tracker.Issue, ps *db.PlanningState) ([]string, error) {
+// CompletePlanning finalizes the planning phase. The description IS the spec,
+// so we update the bot's comment to indicate implementation has begun.
+func (p *Planner) CompletePlanning(ctx context.Context, issue tracker.Issue, ps *db.PlanningState) error {
 	log.Info().Str("issue", issue.Key).Msg("completing planning phase")
 
-	comments, err := p.tracker.GetComments(ctx, issue.Key)
-	if err != nil {
-		return nil, err
-	}
-
-	conversationText := tracker.FormatConversation(comments, p.botUserID)
-
-	// Generate final specification via claude
-	prompt, err := worker.RenderPrompt("planning_complete.md.tmpl", map[string]interface{}{
-		"IssueKey":            issue.Key,
-		"IssueTitle":          issue.Title,
-		"OriginalDescription": ps.OriginalDescription,
-		"Conversation":        conversationText,
-		"BotDisplayName":      p.cfg.BotDisplayName,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("rendering completion prompt: %w", err)
-	}
-
-	result, err := worker.RunClaude(ctx, prompt, p.cfg.TargetRepoPath, p.cfg.PlanningModel)
-	if err != nil {
-		return nil, fmt.Errorf("running planning completion: %w", err)
-	}
-
-	// Update the issue description
-	if !p.cfg.DryRun {
-		if err := p.tracker.UpdateDescription(ctx, issue.Key, result.Output, nil); err != nil {
-			return nil, fmt.Errorf("updating issue description: %w", err)
+	// Update the bot's comment to indicate implementation is starting
+	if !p.cfg.DryRun && ps.BotCommentID != "" {
+		finalComment := fmt.Sprintf("## %s — Implementation Started\n\nAll planning questions have been resolved. Implementation has begun based on the current issue description.",
+			p.cfg.BotDisplayName)
+		if err := p.tracker.UpdateComment(ctx, issue.Key, ps.BotCommentID, finalComment); err != nil {
+			log.Warn().Err(err).Msg("failed to update bot comment for completion")
 		}
 	}
 
-	// Update state
-	ps.Status = "complete"
+	ps.Status = StatusComplete
 	if err := p.stateDB.UpdatePlanningState(ps); err != nil {
-		return nil, fmt.Errorf("updating planning state: %w", err)
+		return fmt.Errorf("updating planning state: %w", err)
 	}
 
-	// Get participants
-	var participants []string
-	if err := json.Unmarshal([]byte(ps.ParticipantsJSON), &participants); err != nil {
-		participants = nil
-	}
-
-	log.Info().Str("issue", issue.Key).Int("participants", len(participants)).Msg("planning phase complete")
-	return participants, nil
+	log.Info().Str("issue", issue.Key).Msg("planning phase complete")
+	return nil
 }
 
 // CheckTimeout checks if a planning conversation has timed out.
+// Uses LastSystemCommentAt (when the bot last analyzed) since the
+// description-centric flow doesn't track human comment timestamps.
 func (p *Planner) CheckTimeout(ctx context.Context, issue tracker.Issue, ps *db.PlanningState) error {
-	if ps.LastHumanResponseAt == nil {
+	if ps.LastSystemCommentAt == nil {
 		return nil
 	}
 
-	daysSinceResponse := time.Since(*ps.LastHumanResponseAt).Hours() / 24
+	daysSinceActivity := time.Since(*ps.LastSystemCommentAt).Hours() / 24
 	reminderDays := float64(p.cfg.PlanningReminderDays)
 
-	if daysSinceResponse >= reminderDays*2 && p.cfg.PlanningTimeoutAction == "abandon" {
-		ps.Status = "timed_out"
+	if daysSinceActivity >= reminderDays*2 && p.cfg.PlanningTimeoutAction == "abandon" {
+		ps.Status = StatusTimedOut
 		return p.stateDB.UpdatePlanningState(ps)
 	}
 
-	if daysSinceResponse >= reminderDays {
+	if daysSinceActivity >= reminderDays {
 		if !p.cfg.DryRun {
-			reminder := fmt.Sprintf("## %s — Reminder\n\nThis planning conversation has been waiting for a response for %d days. Please reply to continue or react with 👍 to begin implementation with the current plan.",
-				p.cfg.BotDisplayName, int(daysSinceResponse))
+			reminder := fmt.Sprintf("## %s — Reminder\n\nThis planning conversation has been waiting for a response for %d days. Please update the issue description to continue or react with :+1: to begin implementation with the current plan.",
+				p.cfg.BotDisplayName, int(daysSinceActivity))
 			return p.tracker.AddComment(ctx, issue.Key, reminder)
 		}
 	}
 
 	return nil
+}
+
+// parseQuestions extracts numbered items from the ### Open Questions section.
+var questionsRe = regexp.MustCompile(`(?m)^\d+\.\s+(.+)`)
+
+func parseQuestions(output string) []string {
+	// Find the Open Questions section
+	sectionStart := strings.Index(output, "### Open Questions")
+	if sectionStart == -1 {
+		return nil
+	}
+
+	// Extract text until the next ### heading or end of string
+	rest := output[sectionStart+len("### Open Questions"):]
+	nextSection := strings.Index(rest, "\n### ")
+	if nextSection != -1 {
+		rest = rest[:nextSection]
+	}
+
+	matches := questionsRe.FindAllStringSubmatch(rest, -1)
+	var questions []string
+	for _, m := range matches {
+		q := strings.TrimSpace(m[1])
+		if q != "" {
+			questions = append(questions, q)
+		}
+	}
+	return questions
 }
 
 func (p *Planner) detectReadyIntent(ctx context.Context, commentBody string) (bool, error) {
@@ -318,23 +326,6 @@ Respond with ONLY a JSON object: {"ready": true} or {"ready": false}`, commentBo
 		return false, fmt.Errorf("parsing ready detection response: %w", err)
 	}
 	return result.Ready, nil
-}
-
-func (p *Planner) updateParticipants(ps *db.PlanningState, comments []tracker.Comment) []string {
-	var existing []string
-	_ = json.Unmarshal([]byte(ps.ParticipantsJSON), &existing)
-
-	seen := make(map[string]bool)
-	for _, e := range existing {
-		seen[e] = true
-	}
-	for _, c := range comments {
-		if c.Author != p.botUserID && !seen[c.Author] {
-			existing = append(existing, c.Author)
-			seen[c.Author] = true
-		}
-	}
-	return existing
 }
 
 func (p *Planner) collectImages(ctx context.Context, issue tracker.Issue) ([]string, error) {
