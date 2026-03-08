@@ -205,7 +205,7 @@ func (p *Planner) CheckReadySignal(ctx context.Context, issue tracker.Issue, ps 
 		reactions, err := p.tracker.GetCommentReactions(ctx, issue.Key, ps.BotCommentID)
 		if err == nil {
 			for _, r := range reactions {
-				if r.Type == "thumbs_up" && r.UserID != p.botUserID {
+				if r.Type == "thumbs_up" {
 					return true, nil
 				}
 			}

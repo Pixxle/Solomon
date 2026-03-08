@@ -222,7 +222,7 @@ func (pd *PriorityDispatcher) checkPlanningReady(ctx context.Context, activePlan
 			reactions, err := pd.tracker.GetCommentReactions(ctx, issue.Key, ps.BotCommentID)
 			if err == nil {
 				for _, r := range reactions {
-					if r.Type == "thumbs_up" && r.UserID != pd.botUserID {
+					if r.Type == "thumbs_up" {
 						if !issue.IsAssignedTo(pd.botUserID) {
 							log.Debug().Str("issue", issue.Key).Msg("thumbs-up detected but issue not assigned to bot, staying in planning")
 							break
