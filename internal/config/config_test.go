@@ -29,23 +29,15 @@ func TestBotSlug(t *testing.T) {
 
 func TestStatusMethods(t *testing.T) {
 	jiraCfg := &Config{
-		TaskTracker:            TrackerJira,
-		JiraStatusTodo:         "To Do",
-		JiraStatusInProgress:   "In Progress",
-		JiraStatusInReview:     "In Review",
-		JiraStatusDone:         "Done",
-		LinearStatusTodo:       "Todo",
-		LinearStatusInProgress: "Started",
-		LinearStatusInReview:   "Review",
-		LinearStatusDone:       "Completed",
+		TaskTracker:          TrackerJira,
+		JiraStatusTodo:       "To Do",
+		JiraStatusInProgress: "In Progress",
+		JiraStatusInReview:   "In Review",
+		JiraStatusDone:       "Done",
 	}
 
 	linearCfg := &Config{
 		TaskTracker:            TrackerLinear,
-		JiraStatusTodo:         "To Do",
-		JiraStatusInProgress:   "In Progress",
-		JiraStatusInReview:     "In Review",
-		JiraStatusDone:         "Done",
 		LinearStatusTodo:       "Todo",
 		LinearStatusInProgress: "Started",
 		LinearStatusInReview:   "Review",
@@ -165,7 +157,7 @@ func TestLoad_ValidationErrors(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}
-			if got := err.Error(); !contains(got, tt.wantErr) {
+			if got := err.Error(); !strings.Contains(got, tt.wantErr) {
 				t.Errorf("error = %q, want substring %q", got, tt.wantErr)
 			}
 		})
@@ -209,17 +201,4 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.MaxReviewRounds != 3 {
 		t.Errorf("MaxReviewRounds = %d, want %d", cfg.MaxReviewRounds, 3)
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchSubstring(s, substr)
-}
-
-func searchSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
