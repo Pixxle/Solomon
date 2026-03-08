@@ -4,8 +4,8 @@ go 1.26
 
 require (
 	github.com/joho/godotenv v1.5.1
-	github.com/mattn/go-sqlite3 v1.14.24
-	github.com/rs/zerolog v1.33.0
+	github.com/mattn/go-sqlite3 v1.14.34
+	github.com/rs/zerolog v1.34.0
 )
 
 require (
