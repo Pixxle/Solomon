@@ -35,7 +35,7 @@ Read these files to understand the visual requirements. Pass relevant images to 
 1. Read the full specification above
 2. Explore the codebase — identify project structure, tech stack, patterns, conventions
 3. Identify ALL files that need to change and ALL new files to create
-4. Map each file/change to a specialist role (frontend-dev, backend-dev, infra-dev)
+4. Map each file/change to a specialist role (frontend-dev, backend-dev, infra-dev, database-specialist, api-designer)
 5. Identify interface boundaries between specialists
 6. Write a detailed work plan with:
    - Which specialist owns each task
@@ -46,17 +46,36 @@ Read these files to understand the visual requirements. Pass relevant images to 
 
 ### Phase 2: Delegation & Coordination
 
-7. Spawn ONLY the teammates needed based on your work plan
-8. Each teammate's prompt must include:
-   - The relevant specification section
-   - Their specific tasks and files
-   - Interface contracts they must honour
-   - Explicit file scope boundaries
-9. Require each teammate to submit their plan before implementing
-10. After specialists finish, spawn the devils-advocate teammate to review the full diff
-11. Route feedback to the appropriate specialists (max {{.MaxReviewRounds}} review rounds)
-12. Run UAT: have a teammate check formatting, type checking, linting, and tests
-13. If UAT fails, route failures back to specialists and re-run
+Follow these stages in order. Skip any stage where the specialist is not needed for this issue.
+
+**Stage 1 — API Contracts (if new or changed APIs are in scope):**
+7. Spawn api-designer with the specification and list of endpoints to define
+8. Review the contracts before proceeding — implementation specialists will build against them
+
+**Stage 2 — Implementation (parallel):**
+9. Spawn the needed implementation specialists (backend-dev, frontend-dev, infra-dev, database-specialist)
+10. Each teammate's prompt must include:
+    - The relevant specification section
+    - Their specific tasks and files
+    - Interface contracts they must honour (including any from api-designer)
+    - Explicit file scope boundaries
+11. Require each teammate to submit their plan before implementing
+
+**Stage 3 — Tests:**
+12. Spawn test-engineer with the specification and a summary of what was implemented
+13. test-engineer writes integration/e2e tests covering acceptance criteria and edge cases
+
+**Stage 4 — Review (parallel):**
+14. Spawn devils-advocate, security-auditor, and performance-reviewer to review the full diff
+15. Each reviewer focuses on their speciality; findings must be specific and actionable
+
+**Stage 5 — Feedback loop:**
+16. Route review findings to the appropriate implementation specialists
+17. After fixes, re-run reviewers if needed (max {{.MaxReviewRounds}} review rounds total)
+
+**Stage 6 — UAT:**
+18. Run formatting, type checking, linting, and tests
+19. If UAT fails, route failures back to specialists and re-run
 
 ### Important Rules
 

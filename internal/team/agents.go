@@ -14,7 +14,12 @@ var agentFiles = []string{
 	"frontend-dev.md",
 	"backend-dev.md",
 	"infra-dev.md",
+	"database-specialist.md",
+	"api-designer.md",
+	"test-engineer.md",
 	"devils-advocate.md",
+	"security-auditor.md",
+	"performance-reviewer.md",
 }
 
 // getAgentsSourceDir finds the agents/ directory containing the shipped agent markdown files.
