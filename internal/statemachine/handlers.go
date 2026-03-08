@@ -41,12 +41,11 @@ func (h *Handlers) HandlePlanningConversation(ctx context.Context, item *WorkIte
 	if err != nil {
 		log.Warn().Err(err).Msg("error checking ready signal")
 	}
+	if ready && item.Issue.IsAssignedTo(h.m.botUserID) {
+		return h.transitionToImplementation(ctx, item.Issue, ps)
+	}
 	if ready {
-		if !item.Issue.IsAssignedTo(h.m.botUserID) {
-			log.Info().Str("issue", item.Issue.Key).Msg("ready signal detected but issue not assigned to bot, continuing planning only")
-		} else {
-			return h.transitionToImplementation(ctx, item.Issue, ps)
-		}
+		log.Info().Str("issue", item.Issue.Key).Msg("ready signal detected but issue not assigned to bot, continuing planning only")
 	}
 
 	if err := h.m.planner.CheckTimeout(ctx, item.Issue, ps); err != nil {
@@ -59,7 +58,7 @@ func (h *Handlers) HandlePlanningConversation(ctx context.Context, item *WorkIte
 // HandlePlanningReady transitions a planning-complete issue into implementation.
 func (h *Handlers) HandlePlanningReady(ctx context.Context, item *WorkItem) error {
 	if !item.Issue.IsAssignedTo(h.m.botUserID) {
-		log.Warn().Str("issue", item.Issue.Key).Msg("HandlePlanningReady called but issue not assigned to bot, skipping")
+		log.Info().Str("issue", item.Issue.Key).Msg("HandlePlanningReady called but issue not assigned to bot, skipping")
 		return nil
 	}
 	ps := item.Context["planning_state"].(*db.PlanningState)
