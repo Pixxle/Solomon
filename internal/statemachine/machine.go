@@ -70,7 +70,7 @@ func (m *Machine) Handle(ctx context.Context, item *WorkItem) error {
 		return m.handlers.HandlePlanningConversation(ctx, item)
 	case StatePlanningReady:
 		return m.handlers.HandlePlanningReady(ctx, item)
-	case StateInProgress:
+	case StateCIFailure:
 		return m.handlers.HandleCIFailure(ctx, item)
 	case StateInReview:
 		return m.handlers.HandleReviewFeedback(ctx, item)

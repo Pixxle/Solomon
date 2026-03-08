@@ -1,6 +1,10 @@
 package tracker
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 type Issue struct {
 	Key         string
@@ -35,4 +39,22 @@ type Attachment struct {
 type Transition struct {
 	ID   string
 	Name string
+}
+
+// FormatConversation formats comments into a conversation string.
+// If botUserID is non-empty, each line is prefixed with [human]/[assistant] role.
+func FormatConversation(comments []Comment, botUserID string) string {
+	var sb strings.Builder
+	for _, c := range comments {
+		if botUserID != "" {
+			role := "human"
+			if c.Author == botUserID {
+				role = "assistant"
+			}
+			fmt.Fprintf(&sb, "[%s] %s:\n%s\n\n", role, c.Author, c.Body)
+		} else {
+			fmt.Fprintf(&sb, "[%s]:\n%s\n\n", c.Author, c.Body)
+		}
+	}
+	return sb.String()
 }

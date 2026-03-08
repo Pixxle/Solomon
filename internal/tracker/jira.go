@@ -491,7 +491,7 @@ func textToADF(text string) map[string]interface{} {
 			for i < len(lines) && isBulletLine(lines[i]) {
 				itemText := stripBullet(lines[i])
 				if checked, isTask := parseTaskItem(itemText); isTask {
-					items = append(items, adfTaskItem(checked, checked_text(itemText)))
+					items = append(items, adfTaskItem(checked, checkedText(itemText)))
 				} else {
 					items = append(items, adfListItem(itemText))
 				}
@@ -645,7 +645,7 @@ func parseTaskItem(text string) (checked bool, isTask bool) {
 	return false, false
 }
 
-func checked_text(text string) string {
+func checkedText(text string) string {
 	return strings.TrimSpace(taskRe.ReplaceAllString(text, ""))
 }
 

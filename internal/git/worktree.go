@@ -73,6 +73,16 @@ func GetCurrentSHA(ctx context.Context, cwd string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// DiffFromMain returns the diff between main (or master) and HEAD.
+func DiffFromMain(ctx context.Context, cwd string) (string, error) {
+	return output(ctx, cwd, "git", "diff", "main...HEAD")
+}
+
+// CommitLogFromMain returns the oneline commit log between main and HEAD.
+func CommitLogFromMain(ctx context.Context, cwd string) (string, error) {
+	return output(ctx, cwd, "git", "log", "main...HEAD", "--oneline")
+}
+
 func run(ctx context.Context, dir string, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir

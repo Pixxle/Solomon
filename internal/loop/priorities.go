@@ -37,8 +37,22 @@ func NewPriorityDispatcher(cfg *config.Config, t tracker.TaskTracker, gh *ghclie
 
 // FindWork returns the highest-priority work item, or nil if there's nothing to do.
 func (pd *PriorityDispatcher) FindWork(ctx context.Context) (*statemachine.WorkItem, error) {
+	// Pre-fetch shared data to avoid duplicate API calls.
+	activePlans, err := pd.stateDB.GetActivePlanningStates()
+	if err != nil {
+		log.Warn().Err(err).Msg("error fetching active planning states")
+	}
+	todoIssues, err := pd.tracker.FetchIssuesByStatus(ctx, pd.cfg.StatusTodo())
+	if err != nil {
+		log.Warn().Err(err).Msg("error fetching todo issues")
+	}
+	todoMap := make(map[string]tracker.Issue)
+	for _, i := range todoIssues {
+		todoMap[i.Key] = i
+	}
+
 	// Priority 1: Active planning with new human comments
-	if item, err := pd.checkPlanningConversations(ctx); err != nil {
+	if item, err := pd.checkPlanningConversations(ctx, activePlans, todoMap); err != nil {
 		log.Warn().Err(err).Msg("error checking planning conversations")
 	} else if item != nil {
 		return item, nil
@@ -59,39 +73,23 @@ func (pd *PriorityDispatcher) FindWork(ctx context.Context) (*statemachine.WorkI
 	}
 
 	// Priority 4: Planning ready signal
-	if item, err := pd.checkPlanningReady(ctx); err != nil {
+	if item, err := pd.checkPlanningReady(ctx, activePlans, todoMap); err != nil {
 		log.Warn().Err(err).Msg("error checking planning ready")
 	} else if item != nil {
 		return item, nil
 	}
 
 	// Priority 5: New issues
-	if item, err := pd.checkNewIssues(ctx); err != nil {
-		log.Warn().Err(err).Msg("error checking new issues")
-	} else if item != nil {
+	if item := pd.checkNewIssues(activePlans, todoIssues); item != nil {
 		return item, nil
 	}
 
 	return nil, nil
 }
 
-func (pd *PriorityDispatcher) checkPlanningConversations(ctx context.Context) (*statemachine.WorkItem, error) {
-	activePlans, err := pd.stateDB.GetActivePlanningStates()
-	if err != nil {
-		return nil, err
-	}
-
-	todoIssues, err := pd.tracker.FetchIssuesByStatus(ctx, pd.cfg.StatusTodo())
-	if err != nil {
-		return nil, err
-	}
-	issueMap := make(map[string]tracker.Issue)
-	for _, i := range todoIssues {
-		issueMap[i.Key] = i
-	}
-
+func (pd *PriorityDispatcher) checkPlanningConversations(ctx context.Context, activePlans []*db.PlanningState, todoMap map[string]tracker.Issue) (*statemachine.WorkItem, error) {
 	for _, ps := range activePlans {
-		issue, ok := issueMap[ps.IssueKey]
+		issue, ok := todoMap[ps.IssueKey]
 		if !ok {
 			continue
 		}
@@ -202,7 +200,7 @@ func (pd *PriorityDispatcher) checkCIFailures(ctx context.Context) (*statemachin
 		}
 
 		return &statemachine.WorkItem{
-			State: statemachine.StateInProgress,
+			State: statemachine.StateCIFailure,
 			Issue: issue,
 			Context: map[string]interface{}{
 				"pr_number": prNumber,
@@ -214,23 +212,9 @@ func (pd *PriorityDispatcher) checkCIFailures(ctx context.Context) (*statemachin
 	return nil, nil
 }
 
-func (pd *PriorityDispatcher) checkPlanningReady(ctx context.Context) (*statemachine.WorkItem, error) {
-	activePlans, err := pd.stateDB.GetActivePlanningStates()
-	if err != nil {
-		return nil, err
-	}
-
-	todoIssues, err := pd.tracker.FetchIssuesByStatus(ctx, pd.cfg.StatusTodo())
-	if err != nil {
-		return nil, err
-	}
-	issueMap := make(map[string]tracker.Issue)
-	for _, i := range todoIssues {
-		issueMap[i.Key] = i
-	}
-
+func (pd *PriorityDispatcher) checkPlanningReady(ctx context.Context, activePlans []*db.PlanningState, todoMap map[string]tracker.Issue) (*statemachine.WorkItem, error) {
 	for _, ps := range activePlans {
-		issue, ok := issueMap[ps.IssueKey]
+		issue, ok := todoMap[ps.IssueKey]
 		if !ok {
 			continue
 		}
@@ -241,12 +225,14 @@ func (pd *PriorityDispatcher) checkPlanningReady(ctx context.Context) (*statemac
 			continue
 		}
 
-		comments, err := pd.tracker.GetCommentsSince(ctx, issue.Key, *ps.LastSystemCommentAt)
+		allComments, err := pd.tracker.GetComments(ctx, issue.Key)
 		if err != nil {
 			continue
 		}
-		for _, c := range comments {
-			if c.Author == pd.botUserID {
+
+		// Check for keyword-based ready signal in human comments since last system comment
+		for _, c := range allComments {
+			if c.Author == pd.botUserID || !c.Created.After(*ps.LastSystemCommentAt) {
 				continue
 			}
 			lower := strings.ToLower(c.Body)
@@ -262,10 +248,6 @@ func (pd *PriorityDispatcher) checkPlanningReady(ctx context.Context) (*statemac
 		}
 
 		// Check thumbs_up reaction on last system comment
-		allComments, err := pd.tracker.GetComments(ctx, issue.Key)
-		if err != nil {
-			continue
-		}
 		for _, c := range allComments {
 			if c.Author != pd.botUserID || !c.Created.Equal(*ps.LastSystemCommentAt) {
 				continue
@@ -291,30 +273,26 @@ func (pd *PriorityDispatcher) checkPlanningReady(ctx context.Context) (*statemac
 	return nil, nil
 }
 
-func (pd *PriorityDispatcher) checkNewIssues(ctx context.Context) (*statemachine.WorkItem, error) {
-	todoIssues, err := pd.tracker.FetchIssuesByStatus(ctx, pd.cfg.StatusTodo())
-	if err != nil {
-		return nil, err
+func (pd *PriorityDispatcher) checkNewIssues(activePlans []*db.PlanningState, todoIssues []tracker.Issue) *statemachine.WorkItem {
+	// Build set of issues that already have planning state
+	hasPlanning := make(map[string]bool, len(activePlans))
+	for _, ps := range activePlans {
+		hasPlanning[ps.IssueKey] = true
 	}
 
 	for _, issue := range todoIssues {
 		if pd.loopPrev.ShouldSkip(issue.Key) {
 			continue
 		}
-
-		ps, err := pd.stateDB.GetPlanningState(issue.Key)
-		if err != nil {
-			continue
-		}
-		if ps != nil {
+		if hasPlanning[issue.Key] {
 			continue
 		}
 
 		return &statemachine.WorkItem{
 			State: statemachine.StateTodo,
 			Issue: issue,
-		}, nil
+		}
 	}
 
-	return nil, nil
+	return nil
 }

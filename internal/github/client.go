@@ -294,3 +294,8 @@ func parseReactedComments(jsonData string, commentType string) []PRComment {
 	}
 	return comments
 }
+
+// GetPRDiff returns the diff for a given PR number.
+func (c *Client) GetPRDiff(ctx context.Context, prNumber int) (string, error) {
+	return c.gh(ctx, "pr", "diff", strconv.Itoa(prNumber))
+}

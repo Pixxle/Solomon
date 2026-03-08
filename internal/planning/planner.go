@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -130,15 +131,7 @@ func (p *Planner) ContinuePlanning(ctx context.Context, issue tracker.Issue, ps 
 	// Update participants
 	participants := p.updateParticipants(ps, newHumanComments)
 
-	// Build conversation context
-	var conversationText string
-	for _, c := range comments {
-		role := "human"
-		if c.Author == p.botUserID {
-			role = "assistant"
-		}
-		conversationText += fmt.Sprintf("[%s] %s:\n%s\n\n", role, c.Author, c.Body)
-	}
+	conversationText := tracker.FormatConversation(comments, p.botUserID)
 
 	// Generate follow-up via claude
 	prompt, err := worker.RenderPrompt("planning_followup.md.tmpl", map[string]interface{}{
@@ -239,15 +232,7 @@ func (p *Planner) CompletePlanning(ctx context.Context, issue tracker.Issue, ps 
 		return nil, err
 	}
 
-	// Build full conversation
-	var conversationText string
-	for _, c := range comments {
-		role := "human"
-		if c.Author == p.botUserID {
-			role = "assistant"
-		}
-		conversationText += fmt.Sprintf("[%s] %s:\n%s\n\n", role, c.Author, c.Body)
-	}
+	conversationText := tracker.FormatConversation(comments, p.botUserID)
 
 	// Generate final specification via claude
 	prompt, err := worker.RenderPrompt("planning_complete.md.tmpl", map[string]interface{}{
@@ -408,47 +393,14 @@ func (p *Planner) collectImages(ctx context.Context, issue tracker.Issue) ([]str
 }
 
 func containsReadyKeyword(text string) bool {
-	lower := fmt.Sprintf(" %s ", text)
+	lower := strings.ToLower(text)
 	keywords := []string{"ready", "lgtm", "approved", "go ahead", "looks good", "start building"}
 	for _, kw := range keywords {
-		if contains(lower, kw) {
+		if strings.Contains(lower, kw) {
 			return true
 		}
 	}
 	return false
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsCI(s, substr))
-}
-
-func containsCI(s, substr string) bool {
-	s = fmt.Sprintf("%s", s)
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if eqFold(s[i:i+len(substr)], substr) {
-			return true
-		}
-	}
-	return false
-}
-
-func eqFold(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a); i++ {
-		ca, cb := a[i], b[i]
-		if ca >= 'A' && ca <= 'Z' {
-			ca += 'a' - 'A'
-		}
-		if cb >= 'A' && cb <= 'Z' {
-			cb += 'a' - 'A'
-		}
-		if ca != cb {
-			return false
-		}
-	}
-	return true
 }
 
 func isImageMime(mime string) bool {

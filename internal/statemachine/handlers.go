@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -116,7 +115,7 @@ func (h *Handlers) HandleCIFailure(ctx context.Context, item *WorkItem) error {
 	}
 	defer git.CleanupWorktree(ctx, branch, h.m.cfg.TargetRepoPath, h.m.cfg.WorktreePath)
 
-	diff, _ := h.getDiff(ctx, wtDir)
+	diff, _ := git.DiffFromMain(ctx, wtDir)
 	prompt, err := team.BuildCIFixPrompt(item.Issue.Key, ciLogs, diff, item.Issue.Description)
 	if err != nil {
 		return err
@@ -220,10 +219,7 @@ func (h *Handlers) transitionToImplementation(ctx context.Context, issue tracker
 	defer git.CleanupWorktree(ctx, branch, h.m.cfg.TargetRepoPath, h.m.cfg.WorktreePath)
 
 	comments, _ := h.m.tracker.GetComments(ctx, issue.Key)
-	var conversationText string
-	for _, c := range comments {
-		conversationText += fmt.Sprintf("[%s]:\n%s\n\n", c.Author, c.Body)
-	}
+	conversationText := tracker.FormatConversation(comments, "")
 
 	var imagePaths []string
 	_ = json.Unmarshal([]byte(ps.ImageRefsJSON), &imagePaths)
@@ -259,8 +255,8 @@ func (h *Handlers) transitionToImplementation(ctx context.Context, issue tracker
 		return fmt.Errorf("pushing branch: %w", err)
 	}
 
-	diff, _ := h.getDiff(ctx, wtDir)
-	commitLog, _ := h.getCommitLog(ctx, wtDir)
+	diff, _ := git.DiffFromMain(ctx, wtDir)
+	commitLog, _ := git.CommitLogFromMain(ctx, wtDir)
 	prDescPrompt, err := team.BuildPRDescriptionPrompt(
 		issue.Key, issue.Title, ps.OriginalDescription,
 		conversationText, diff, commitLog, h.m.cfg.BotDisplayName,
@@ -309,7 +305,7 @@ func (h *Handlers) transitionToImplementation(ctx context.Context, issue tracker
 func (h *Handlers) answerQuestion(ctx context.Context, issue tracker.Issue, prNumber int, comment ghclient.PRComment) error {
 	log.Info().Str("issue", issue.Key).Int64("comment", comment.ID).Msg("answering question")
 
-	diff, _ := h.getDiffForPR(ctx, prNumber)
+	diff, _ := h.m.github.GetPRDiff(ctx, prNumber)
 	prompt, err := team.BuildAnswerQuestionPrompt(comment.Body, diff)
 	if err != nil {
 		return err
@@ -344,7 +340,7 @@ func (h *Handlers) addressCodeChanges(ctx context.Context, issue tracker.Issue, 
 		feedback = append(feedback, c.Body)
 	}
 
-	diff, _ := h.getDiff(ctx, wtDir)
+	diff, _ := git.DiffFromMain(ctx, wtDir)
 	prompt, err := team.BuildAddressChangesPrompt(issue.Key, feedback, diff)
 	if err != nil {
 		return err
@@ -386,27 +382,6 @@ func (h *Handlers) recordFeedback(issueKey string, prNumber int, comment ghclien
 	if err := h.m.stateDB.InsertPRFeedback(rec); err != nil {
 		log.Warn().Err(err).Msg("failed to record PR feedback")
 	}
-}
-
-func (h *Handlers) getDiff(ctx context.Context, wtDir string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "diff", "main...HEAD")
-	cmd.Dir = wtDir
-	out, err := cmd.Output()
-	return string(out), err
-}
-
-func (h *Handlers) getCommitLog(ctx context.Context, wtDir string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "log", "main...HEAD", "--oneline")
-	cmd.Dir = wtDir
-	out, err := cmd.Output()
-	return string(out), err
-}
-
-func (h *Handlers) getDiffForPR(ctx context.Context, prNumber int) (string, error) {
-	cmd := exec.CommandContext(ctx, "gh", "pr", "diff", strconv.Itoa(prNumber))
-	cmd.Dir = h.m.cfg.TargetRepoPath
-	out, err := cmd.Output()
-	return string(out), err
 }
 
 func classifyComment(ctx context.Context, body, model string) string {

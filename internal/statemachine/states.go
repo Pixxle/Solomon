@@ -1,30 +1,31 @@
 package statemachine
 
-// State represents the internal state of an issue within the system.
-// The tracker only has four statuses (To Do, In Progress, In Review, Done).
-// Planning is an internal phase tracked in SQLite while the issue remains
-// in To Do in the tracker.
+// State represents what action the dispatcher wants taken on an issue.
+// These are dispatch signals, not tracker statuses — the tracker only has
+// four statuses (To Do, In Progress, In Review, Done).
 type State string
 
 const (
-	// StateTodo is a fresh To Do issue with no planning state row.
+	// StateTodo — fresh To Do issue, no planning state row. Action: start planning.
 	StateTodo State = "todo"
 
-	// StatePlanning is a To Do issue with an active planning conversation.
-	// The tracker status remains To Do — planning is internal only.
+	// StatePlanning — active planning conversation with new human comments.
+	// Action: continue the planning conversation (or detect ready signal).
 	StatePlanning State = "planning"
 
-	// StatePlanningReady is a planning issue where the human has signalled readiness.
+	// StatePlanningReady — human signalled readiness.
+	// Action: finalize spec, create worktree, launch agent team, open draft PR.
 	StatePlanningReady State = "planning_ready"
 
-	// StateInProgress means the issue has been transitioned to In Progress
-	// and implementation (agent team) is running or has run.
-	StateInProgress State = "in_progress"
+	// StateCIFailure — In Progress issue whose PR has a failing CI check.
+	// Action: fix CI in worktree and push.
+	StateCIFailure State = "ci_failure"
 
-	// StateInReview means CI has passed and the PR has been marked ready for review.
+	// StateInReview — PR is ready for review and has unprocessed reviewer comments.
+	// Action: classify and respond to review feedback.
 	StateInReview State = "in_review"
 
-	// StateDone means the PR has been merged and the issue is closed.
+	// StateDone — PR merged, issue closed. No dispatch action (housekeeping only).
 	StateDone State = "done"
 )
 
@@ -36,13 +37,14 @@ type Transition struct {
 }
 
 // ValidTransitions defines all allowed state transitions per the spec §2.2.
+// Note: These use tracker-level concepts (not dispatch states like StateCIFailure).
 var ValidTransitions = []Transition{
 	{StateTodo, StatePlanning, "issue detected with configured label"},
 	{StatePlanning, StatePlanning, "new question posted or human replies"},
 	{StatePlanning, StatePlanningReady, "human signals ready for development"},
-	{StatePlanningReady, StateInProgress, "description updated, implementation begins"},
-	{StateInProgress, StateInProgress, "CI failure fixed or devil's advocate rework"},
-	{StateInProgress, StateInReview, "CI passes on draft PR"},
-	{StateInReview, StateInProgress, "reviewer requests code changes"},
+	{StatePlanningReady, "in_progress", "description updated, implementation begins"},
+	{"in_progress", "in_progress", "CI failure fixed or devil's advocate rework"},
+	{"in_progress", StateInReview, "CI passes on draft PR"},
+	{StateInReview, "in_progress", "reviewer requests code changes"},
 	{StateInReview, StateDone, "PR merged"},
 }
