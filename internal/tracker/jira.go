@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -351,9 +352,52 @@ func (j *JiraTracker) AttachFile(ctx context.Context, issueKey string, filePath 
 }
 
 func (j *JiraTracker) GetCommentReactions(ctx context.Context, issueKey string, commentID string) ([]Reaction, error) {
-	// Jira doesn't have comment reactions in the same way as GitHub.
-	// This is a placeholder - reactions on Jira comments aren't standard.
-	return nil, nil
+	commentIDInt, err := strconv.ParseInt(commentID, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid comment ID %q: %w", commentID, err)
+	}
+
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"commentIds": []int64{commentIDInt},
+	})
+
+	req, err := j.newRequest(ctx, "POST", "/jira/rest/internal/2/reactions/view", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := j.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		io.Copy(io.Discard, resp.Body)
+		return nil, nil
+	}
+
+	var results []struct {
+		EmojiID string `json:"emojiId"`
+		Count   int    `json:"count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
+		return nil, fmt.Errorf("decoding reactions response: %w", err)
+	}
+
+	var reactions []Reaction
+	for _, r := range results {
+		if r.Count == 0 {
+			continue
+		}
+		reactionType := r.EmojiID
+		if r.EmojiID == "1f44d" {
+			reactionType = "thumbs_up"
+		}
+		reactions = append(reactions, Reaction{Type: reactionType})
+	}
+	return reactions, nil
 }
 
 func (j *JiraTracker) UpdateDescription(ctx context.Context, issueKey string, description string, attachments []Attachment) error {
