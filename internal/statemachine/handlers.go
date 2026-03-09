@@ -131,7 +131,7 @@ func (h *Handlers) HandleCIFailure(ctx context.Context, item *WorkItem) error {
 		return fmt.Errorf("getting CI logs: %w", err)
 	}
 
-	wtDir, err := git.EnsureWorktree(ctx, branch, h.m.cfg.TargetRepoPath, h.m.cfg.WorktreePath)
+	wtDir, err := git.EnsureWorktreeWithIdentity(ctx, branch, h.m.cfg.TargetRepoPath, h.m.cfg.WorktreePath, h.m.cfg.GitUserName, h.m.cfg.GitUserEmail)
 	if err != nil {
 		return err
 	}
@@ -241,7 +241,7 @@ func (h *Handlers) transitionToImplementation(ctx context.Context, issue tracker
 	}
 
 	branch := h.m.tracker.GetIssueBranchName(issue, h.m.cfg.BotSlug())
-	wtDir, err := git.EnsureWorktree(ctx, branch, h.m.cfg.TargetRepoPath, h.m.cfg.WorktreePath)
+	wtDir, err := git.EnsureWorktreeWithIdentity(ctx, branch, h.m.cfg.TargetRepoPath, h.m.cfg.WorktreePath, h.m.cfg.GitUserName, h.m.cfg.GitUserEmail)
 	if err != nil {
 		return fmt.Errorf("creating worktree: %w", err)
 	}
@@ -357,7 +357,7 @@ func (h *Handlers) addressCodeChanges(ctx context.Context, issue tracker.Issue, 
 		_ = h.m.tracker.TransitionIssue(ctx, issue.Key, h.m.cfg.StatusInProgress())
 	}
 
-	wtDir, err := git.EnsureWorktree(ctx, branch, h.m.cfg.TargetRepoPath, h.m.cfg.WorktreePath)
+	wtDir, err := git.EnsureWorktreeWithIdentity(ctx, branch, h.m.cfg.TargetRepoPath, h.m.cfg.WorktreePath, h.m.cfg.GitUserName, h.m.cfg.GitUserEmail)
 	if err != nil {
 		return err
 	}

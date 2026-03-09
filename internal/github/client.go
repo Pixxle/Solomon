@@ -27,23 +27,29 @@ func NewClient(repoPath string) *Client {
 	return &Client{repoPath: repoPath}
 }
 
-func (c *Client) ValidateAuth(ctx context.Context) (string, error) {
-	out, err := c.gh(ctx, "auth", "status")
+// GitIdentity holds the authenticated GitHub user's identity for git commits.
+type GitIdentity struct {
+	Login string // GitHub username (e.g. "my-bot")
+	Name  string // Display name (e.g. "My Bot")
+	Email string // Commit email (noreply address or primary email)
+}
+
+// GetAuthenticatedIdentity fetches the full git identity (login, name, email) for the
+// authenticated GitHub user. Uses the GitHub noreply email for privacy.
+func (c *Client) GetAuthenticatedIdentity(ctx context.Context) (*GitIdentity, error) {
+	out, err := c.gh(ctx, "api", "user", "--jq", `[.login, .name // .login, .id] | @tsv`)
 	if err != nil {
-		return "", fmt.Errorf("gh auth failed: %w", err)
+		return nil, fmt.Errorf("fetching user identity: %w", err)
 	}
-	// Extract username from output
-	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, "Logged in to") {
-			parts := strings.Fields(line)
-			for i, p := range parts {
-				if p == "as" && i+1 < len(parts) {
-					return strings.TrimSpace(parts[i+1]), nil
-				}
-			}
-		}
+	parts := strings.Split(strings.TrimSpace(out), "\t")
+	if len(parts) < 3 {
+		return nil, fmt.Errorf("unexpected user API response: %s", out)
 	}
-	return "", nil
+	login := parts[0]
+	name := parts[1]
+	// Use GitHub's noreply email: <id>+<login>@users.noreply.github.com
+	email := parts[2] + "+" + login + "@users.noreply.github.com"
+	return &GitIdentity{Login: login, Name: name, Email: email}, nil
 }
 
 func (c *Client) FindPRForBranch(ctx context.Context, branch string) (int, error) {
@@ -333,25 +339,61 @@ func (c *Client) ReplyToReviewComment(ctx context.Context, prNumber int, comment
 
 // ResolveReviewThread resolves the review thread containing the given comment node ID.
 func (c *Client) ResolveReviewThread(ctx context.Context, commentNodeID string) error {
-	threadQuery := fmt.Sprintf(`query { node(id: %q) { ... on PullRequestReviewComment { pullRequestReviewThread { id } } } }`, commentNodeID)
+	// PullRequestReviewComment has no direct thread field; traverse via pullRequest.reviewThreads.
+	threadQuery := fmt.Sprintf(`query {
+		node(id: %q) {
+			... on PullRequestReviewComment {
+				pullRequest {
+					reviewThreads(first: 100) {
+						nodes {
+							id
+							comments(first: 100) {
+								nodes { id }
+							}
+						}
+					}
+				}
+			}
+		}
+	}`, commentNodeID)
 	out, err := c.ghGraphQL(ctx, threadQuery)
 	if err != nil {
-		return fmt.Errorf("querying review thread: %w", err)
+		return fmt.Errorf("querying review threads: %w", err)
 	}
 
-	var threadResult struct {
+	var result struct {
 		Data struct {
 			Node struct {
-				PullRequestReviewThread struct {
-					ID string `json:"id"`
-				} `json:"pullRequestReviewThread"`
+				PullRequest struct {
+					ReviewThreads struct {
+						Nodes []struct {
+							ID       string `json:"id"`
+							Comments struct {
+								Nodes []struct {
+									ID string `json:"id"`
+								} `json:"nodes"`
+							} `json:"comments"`
+						} `json:"nodes"`
+					} `json:"reviewThreads"`
+				} `json:"pullRequest"`
 			} `json:"node"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(out, &threadResult); err != nil {
+	if err := json.Unmarshal(out, &result); err != nil {
 		return fmt.Errorf("parsing thread query response: %w", err)
 	}
-	threadID := threadResult.Data.Node.PullRequestReviewThread.ID
+
+	// Find the thread containing our comment node ID.
+	var threadID string
+outer:
+	for _, thread := range result.Data.Node.PullRequest.ReviewThreads.Nodes {
+		for _, comment := range thread.Comments.Nodes {
+			if comment.ID == commentNodeID {
+				threadID = thread.ID
+				break outer
+			}
+		}
+	}
 	if threadID == "" {
 		return fmt.Errorf("could not find review thread for comment %s", commentNodeID)
 	}

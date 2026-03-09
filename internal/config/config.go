@@ -74,6 +74,10 @@ type Config struct {
 	// Post-processing
 	SimplifyEnabled bool
 
+	// Git identity (set at boot from GitHub auth)
+	GitUserName  string
+	GitUserEmail string
+
 	// CLI overrides
 	DryRun  bool
 	Once    bool
