@@ -86,6 +86,7 @@ func (r *Runner) runIteration(ctx context.Context) error {
 	// Housekeeping transitions
 	r.machine.Handlers().CheckMergedPRs(ctx)
 	r.machine.Handlers().CheckCIPassed(ctx)
+	r.machine.Handlers().CheckClosedTickets(ctx)
 
 	// Find and handle next work item
 	item, err := r.dispatcher.FindWork(ctx)

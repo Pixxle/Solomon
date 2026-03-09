@@ -53,21 +53,39 @@ func (c *Client) GetAuthenticatedIdentity(ctx context.Context) (*GitIdentity, er
 }
 
 func (c *Client) FindPRForBranch(ctx context.Context, branch string) (int, error) {
-	// Check open PRs
-	out, err := c.gh(ctx, "pr", "list", "--head", branch, "--state", "open", "--json", "number", "--limit", "1")
-	if err == nil {
-		if n := parsePRNumber(out); n > 0 {
-			return n, nil
-		}
+	if n, err := c.FindOpenPRForBranch(ctx, branch); err != nil {
+		return 0, err
+	} else if n > 0 {
+		return n, nil
 	}
 	// Check merged PRs
-	out, err = c.gh(ctx, "pr", "list", "--head", branch, "--state", "merged", "--json", "number", "--limit", "1")
+	out, err := c.gh(ctx, "pr", "list", "--head", branch, "--state", "merged", "--json", "number", "--limit", "1")
 	if err == nil {
 		if n := parsePRNumber(out); n > 0 {
 			return n, nil
 		}
 	}
 	return 0, nil
+}
+
+func (c *Client) FindOpenPRForBranch(ctx context.Context, branch string) (int, error) {
+	out, err := c.gh(ctx, "pr", "list", "--head", branch, "--state", "open", "--json", "number", "--limit", "1")
+	if err != nil {
+		return 0, err
+	}
+	if n := parsePRNumber(out); n > 0 {
+		return n, nil
+	}
+	return 0, nil
+}
+
+func (c *Client) ClosePR(ctx context.Context, prNumber int, deleteBranch bool) error {
+	args := []string{"pr", "close", strconv.Itoa(prNumber)}
+	if deleteBranch {
+		args = append(args, "--delete-branch")
+	}
+	_, err := c.gh(ctx, args...)
+	return err
 }
 
 func (c *Client) GetPRComments(ctx context.Context, prNumber int, since *string) ([]PRComment, error) {

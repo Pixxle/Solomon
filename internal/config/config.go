@@ -34,12 +34,14 @@ type Config struct {
 	JiraStatusInProgress string
 	JiraStatusInReview   string
 	JiraStatusDone       string
+	JiraStatusCancelled  string
 
 	// Status Mapping - Linear
 	LinearStatusTodo       string
 	LinearStatusInProgress string
 	LinearStatusInReview   string
 	LinearStatusDone       string
+	LinearStatusCancelled  string
 
 	// Claude Code
 	TeamLeadModel string
@@ -106,11 +108,13 @@ func Load(envPath string) (*Config, error) {
 		JiraStatusInProgress: envOrDefault("JIRA_STATUS_IN_PROGRESS", "In Progress"),
 		JiraStatusInReview:   envOrDefault("JIRA_STATUS_IN_REVIEW", "In Review"),
 		JiraStatusDone:       envOrDefault("JIRA_STATUS_DONE", "Done"),
+		JiraStatusCancelled:  envOrDefault("JIRA_STATUS_CANCELLED", "Cancelled"),
 
 		LinearStatusTodo:       envOrDefault("LINEAR_STATUS_TODO", "Todo"),
 		LinearStatusInProgress: envOrDefault("LINEAR_STATUS_IN_PROGRESS", "In Progress"),
 		LinearStatusInReview:   envOrDefault("LINEAR_STATUS_IN_REVIEW", "In Review"),
 		LinearStatusDone:       envOrDefault("LINEAR_STATUS_DONE", "Done"),
+		LinearStatusCancelled:  envOrDefault("LINEAR_STATUS_CANCELLED", "Cancelled"),
 
 		TeamLeadModel: envOrDefault("TEAM_LEAD_MODEL", "opus"),
 		TeammateModel: envOrDefault("TEAMMATE_MODEL", "sonnet"),
@@ -198,6 +202,13 @@ func (c *Config) StatusDone() string {
 		return c.JiraStatusDone
 	}
 	return c.LinearStatusDone
+}
+
+func (c *Config) StatusCancelled() string {
+	if c.TaskTracker == TrackerJira {
+		return c.JiraStatusCancelled
+	}
+	return c.LinearStatusCancelled
 }
 
 func (c *Config) BotSlug() string {
