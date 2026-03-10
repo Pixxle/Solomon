@@ -149,7 +149,7 @@ func (h *Handlers) HandleCIFailure(ctx context.Context, item *WorkItem) error {
 		return fmt.Errorf("getting CI logs: %w", err)
 	}
 
-	wtDir, err := git.EnsureWorktree(ctx, branch, h.m.cfg.TargetRepoPath, h.m.cfg.WorktreePath)
+	wtDir, err := git.EnsureWorktreeWithIdentity(ctx, branch, h.m.cfg.TargetRepoPath, h.m.cfg.WorktreePath, h.m.cfg.GitUserName, h.m.cfg.GitUserEmail)
 	if err != nil {
 		return err
 	}
@@ -218,6 +218,36 @@ func (h *Handlers) CheckMergedPRs(ctx context.Context) {
 	}
 }
 
+// CheckClosedTickets closes open PRs and deletes branches for tickets moved to Done or Cancelled.
+func (h *Handlers) CheckClosedTickets(ctx context.Context) {
+	cutoff := time.Now().Add(-7 * 24 * time.Hour)
+	for _, status := range []string{h.m.cfg.StatusDone(), h.m.cfg.StatusCancelled()} {
+		issues, err := h.m.tracker.FetchIssuesByStatus(ctx, status)
+		if err != nil {
+			continue
+		}
+		for _, issue := range issues {
+			if issue.Updated.Before(cutoff) {
+				continue
+			}
+			branch := h.m.tracker.GetIssueBranchName(issue, h.m.cfg.BotSlug())
+			prNumber, err := h.m.github.FindOpenPRForBranch(ctx, branch)
+			if err != nil || prNumber == 0 {
+				continue
+			}
+
+			log.Info().Str("issue", issue.Key).Str("status", status).Int("pr", prNumber).Msg("ticket closed, closing PR and deleting branch")
+			if !h.m.cfg.DryRun {
+				if err := h.m.github.ClosePR(ctx, prNumber, true); err != nil {
+					log.Warn().Err(err).Str("issue", issue.Key).Int("pr", prNumber).Msg("failed to close PR")
+					continue
+				}
+				_ = git.CleanupWorktree(ctx, branch, h.m.cfg.TargetRepoPath, h.m.cfg.WorktreePath)
+			}
+		}
+	}
+}
+
 // CheckCIPassed transitions In Progress issues to In Review when CI passes.
 func (h *Handlers) CheckCIPassed(ctx context.Context) {
 	issues, err := h.m.tracker.FetchIssuesByStatus(ctx, h.m.cfg.StatusInProgress())
@@ -259,7 +289,7 @@ func (h *Handlers) transitionToImplementation(ctx context.Context, issue tracker
 	}
 
 	branch := h.m.tracker.GetIssueBranchName(issue, h.m.cfg.BotSlug())
-	wtDir, err := git.EnsureWorktree(ctx, branch, h.m.cfg.TargetRepoPath, h.m.cfg.WorktreePath)
+	wtDir, err := git.EnsureWorktreeWithIdentity(ctx, branch, h.m.cfg.TargetRepoPath, h.m.cfg.WorktreePath, h.m.cfg.GitUserName, h.m.cfg.GitUserEmail)
 	if err != nil {
 		return fmt.Errorf("creating worktree: %w", err)
 	}
@@ -376,7 +406,7 @@ func (h *Handlers) addressCodeChanges(ctx context.Context, issue tracker.Issue, 
 		_ = h.m.tracker.TransitionIssue(ctx, issue.Key, h.m.cfg.StatusInProgress())
 	}
 
-	wtDir, err := git.EnsureWorktree(ctx, branch, h.m.cfg.TargetRepoPath, h.m.cfg.WorktreePath)
+	wtDir, err := git.EnsureWorktreeWithIdentity(ctx, branch, h.m.cfg.TargetRepoPath, h.m.cfg.WorktreePath, h.m.cfg.GitUserName, h.m.cfg.GitUserEmail)
 	if err != nil {
 		return err
 	}

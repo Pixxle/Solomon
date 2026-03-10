@@ -65,6 +65,31 @@ func CleanupWorktree(ctx context.Context, branch, repoPath, worktreeBase string)
 	return nil
 }
 
+// EnsureWorktreeWithIdentity creates or reuses a worktree and configures the
+// git author identity so commits are attributed to the bot.
+func EnsureWorktreeWithIdentity(ctx context.Context, branch, repoPath, worktreeBase, userName, userEmail string) (string, error) {
+	wtDir, err := EnsureWorktree(ctx, branch, repoPath, worktreeBase)
+	if err != nil {
+		return "", err
+	}
+	if userName != "" && userEmail != "" {
+		if err := configureIdentity(ctx, wtDir, userName, userEmail); err != nil {
+			return wtDir, fmt.Errorf("configuring git identity: %w", err)
+		}
+	}
+	return wtDir, nil
+}
+
+func configureIdentity(ctx context.Context, dir, name, email string) error {
+	if err := run(ctx, dir, "git", "config", "user.name", name); err != nil {
+		return fmt.Errorf("setting git user.name: %w", err)
+	}
+	if err := run(ctx, dir, "git", "config", "user.email", email); err != nil {
+		return fmt.Errorf("setting git user.email: %w", err)
+	}
+	return nil
+}
+
 func GetCurrentSHA(ctx context.Context, cwd string) (string, error) {
 	out, err := output(ctx, cwd, "git", "rev-parse", "HEAD")
 	if err != nil {
