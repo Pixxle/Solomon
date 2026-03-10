@@ -32,6 +32,8 @@ type PlanningState struct {
 	BotCommentID        string
 	LastSeenDescription string
 	QuestionsJSON       string
+	PlanningPhase       string
+	ProductSummary      string
 }
 
 type PRFeedbackRecord struct {
@@ -117,7 +119,7 @@ func (s *StateDB) GetPlanningState(issueKey string) (*PlanningState, error) {
 	row := s.db.QueryRow(`SELECT issue_key, conversation_json, participants_json, status,
 		original_description, figma_urls_json, image_refs_json,
 		last_human_response_at, last_system_comment_at, created_at, updated_at,
-		bot_comment_id, last_seen_description, questions_json
+		bot_comment_id, last_seen_description, questions_json, planning_phase, product_summary
 		FROM planning_state WHERE issue_key = ?`, issueKey)
 
 	ps := &PlanningState{}
@@ -125,7 +127,8 @@ func (s *StateDB) GetPlanningState(issueKey string) (*PlanningState, error) {
 	err := row.Scan(&ps.IssueKey, &ps.ConversationJSON, &ps.ParticipantsJSON, &ps.Status,
 		&ps.OriginalDescription, &ps.FigmaURLsJSON, &ps.ImageRefsJSON,
 		&lastHuman, &lastSystem, &created, &updated,
-		&ps.BotCommentID, &ps.LastSeenDescription, &ps.QuestionsJSON)
+		&ps.BotCommentID, &ps.LastSeenDescription, &ps.QuestionsJSON, &ps.PlanningPhase,
+		&ps.ProductSummary)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -152,12 +155,14 @@ func (s *StateDB) InsertPlanningState(ps *PlanningState) error {
 	_, err := s.db.Exec(`INSERT INTO planning_state
 		(issue_key, conversation_json, participants_json, status, original_description,
 		figma_urls_json, image_refs_json, last_human_response_at, last_system_comment_at,
-		created_at, updated_at, bot_comment_id, last_seen_description, questions_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		created_at, updated_at, bot_comment_id, last_seen_description, questions_json,
+		planning_phase, product_summary)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ps.IssueKey, ps.ConversationJSON, ps.ParticipantsJSON, ps.Status,
 		ps.OriginalDescription, ps.FigmaURLsJSON, ps.ImageRefsJSON,
 		nullTimeStr(ps.LastHumanResponseAt), nullTimeStr(ps.LastSystemCommentAt),
-		now, now, ps.BotCommentID, ps.LastSeenDescription, ps.QuestionsJSON)
+		now, now, ps.BotCommentID, ps.LastSeenDescription, ps.QuestionsJSON,
+		ps.PlanningPhase, ps.ProductSummary)
 	return err
 }
 
@@ -168,13 +173,15 @@ func (s *StateDB) UpdatePlanningState(ps *PlanningState) error {
 		figma_urls_json = ?, image_refs_json = ?,
 		last_human_response_at = ?, last_system_comment_at = ?,
 		updated_at = ?,
-		bot_comment_id = ?, last_seen_description = ?, questions_json = ?
+		bot_comment_id = ?, last_seen_description = ?, questions_json = ?,
+		planning_phase = ?, product_summary = ?
 		WHERE issue_key = ?`,
 		ps.ConversationJSON, ps.ParticipantsJSON, ps.Status,
 		ps.FigmaURLsJSON, ps.ImageRefsJSON,
 		nullTimeStr(ps.LastHumanResponseAt), nullTimeStr(ps.LastSystemCommentAt),
 		now,
 		ps.BotCommentID, ps.LastSeenDescription, ps.QuestionsJSON,
+		ps.PlanningPhase, ps.ProductSummary,
 		ps.IssueKey)
 	return err
 }
@@ -196,7 +203,7 @@ func (s *StateDB) queryPlanningStates(whereClause string) ([]*PlanningState, err
 	query := `SELECT issue_key, conversation_json, participants_json, status,
 		original_description, figma_urls_json, image_refs_json,
 		last_human_response_at, last_system_comment_at, created_at, updated_at,
-		bot_comment_id, last_seen_description, questions_json
+		bot_comment_id, last_seen_description, questions_json, planning_phase, product_summary
 		FROM planning_state ` + whereClause
 	rows, err := s.db.Query(query)
 	if err != nil {
@@ -211,7 +218,8 @@ func (s *StateDB) queryPlanningStates(whereClause string) ([]*PlanningState, err
 		if err := rows.Scan(&ps.IssueKey, &ps.ConversationJSON, &ps.ParticipantsJSON, &ps.Status,
 			&ps.OriginalDescription, &ps.FigmaURLsJSON, &ps.ImageRefsJSON,
 			&lastHuman, &lastSystem, &created, &updated,
-			&ps.BotCommentID, &ps.LastSeenDescription, &ps.QuestionsJSON); err != nil {
+			&ps.BotCommentID, &ps.LastSeenDescription, &ps.QuestionsJSON, &ps.PlanningPhase,
+			&ps.ProductSummary); err != nil {
 			return nil, err
 		}
 		ps.CreatedAt = parseTime(created.String)

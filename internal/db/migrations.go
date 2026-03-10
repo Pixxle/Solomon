@@ -1,6 +1,6 @@
 package db
 
-const schemaVersion = 2
+const schemaVersion = 4
 
 var migrations = [][]string{
 	// v1: Initial schema - each statement separate for SQLite compatibility
@@ -55,5 +55,13 @@ var migrations = [][]string{
 		`ALTER TABLE planning_state ADD COLUMN bot_comment_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE planning_state ADD COLUMN last_seen_description TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE planning_state ADD COLUMN questions_json TEXT NOT NULL DEFAULT '[]'`,
+	},
+	// v3: Two-phase planning (product refinement → technical refinement)
+	{
+		`ALTER TABLE planning_state ADD COLUMN planning_phase TEXT NOT NULL DEFAULT 'product'`,
+	},
+	// v4: Persist product refinement summary across phase transitions
+	{
+		`ALTER TABLE planning_state ADD COLUMN product_summary TEXT NOT NULL DEFAULT ''`,
 	},
 }

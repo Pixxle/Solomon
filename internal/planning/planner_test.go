@@ -1,6 +1,10 @@
 package planning
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/pixxle/codehephaestus/internal/db"
+)
 
 func TestParseQuestions(t *testing.T) {
 	tests := []struct {
@@ -88,7 +92,7 @@ func TestDescriptionChanged(t *testing.T) {
 	}
 }
 
-func TestEnsureCorrectHeading(t *testing.T) {
+func TestEnsureCorrectProductHeading(t *testing.T) {
 	botName := "TestBot"
 	tests := []struct {
 		name        string
@@ -98,35 +102,182 @@ func TestEnsureCorrectHeading(t *testing.T) {
 	}{
 		{
 			name:        "upgrade to complete when no questions",
-			input:       "## TestBot — Planning\nSome content",
+			input:       "## TestBot — Product Requirements Refinement\nSome content",
 			noQuestions: true,
-			want:        "## TestBot — Planning Complete\nSome content",
+			want:        "## TestBot — Product Requirements Complete\nSome content",
 		},
 		{
-			name:        "downgrade to planning when has questions",
-			input:       "## TestBot — Planning Complete\nSome content",
+			name:        "downgrade to refinement when has questions",
+			input:       "## TestBot — Product Requirements Complete\nSome content",
 			noQuestions: false,
-			want:        "## TestBot — Planning\nSome content",
+			want:        "## TestBot — Product Requirements Refinement\nSome content",
 		},
 		{
 			name:        "already correct complete heading",
-			input:       "## TestBot — Planning Complete\nSome content",
+			input:       "## TestBot — Product Requirements Complete\nSome content",
 			noQuestions: true,
-			want:        "## TestBot — Planning Complete\nSome content",
+			want:        "## TestBot — Product Requirements Complete\nSome content",
 		},
 		{
-			name:        "already correct planning heading",
-			input:       "## TestBot — Planning\nSome content",
+			name:        "already correct refinement heading",
+			input:       "## TestBot — Product Requirements Refinement\nSome content",
 			noQuestions: false,
-			want:        "## TestBot — Planning\nSome content",
+			want:        "## TestBot — Product Requirements Refinement\nSome content",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ensureCorrectHeading(tt.input, tt.noQuestions, botName)
+			got := ensureCorrectProductHeading(tt.input, tt.noQuestions, botName)
 			if got != tt.want {
-				t.Errorf("ensureCorrectHeading() = %q, want %q", got, tt.want)
+				t.Errorf("ensureCorrectProductHeading() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEnsureCorrectTechnicalHeading(t *testing.T) {
+	botName := "TestBot"
+	tests := []struct {
+		name        string
+		input       string
+		noQuestions bool
+		want        string
+	}{
+		{
+			name:        "upgrade to complete when no questions",
+			input:       "## TestBot — Technical Refinement\nSome content",
+			noQuestions: true,
+			want:        "## TestBot — Technical Refinement Complete\nSome content",
+		},
+		{
+			name:        "downgrade to refinement when has questions",
+			input:       "## TestBot — Technical Refinement Complete\nSome content",
+			noQuestions: false,
+			want:        "## TestBot — Technical Refinement\nSome content",
+		},
+		{
+			name:        "already correct complete heading",
+			input:       "## TestBot — Technical Refinement Complete\nSome content",
+			noQuestions: true,
+			want:        "## TestBot — Technical Refinement Complete\nSome content",
+		},
+		{
+			name:        "already correct refinement heading",
+			input:       "## TestBot — Technical Refinement\nSome content",
+			noQuestions: false,
+			want:        "## TestBot — Technical Refinement\nSome content",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ensureCorrectTechnicalHeading(tt.input, tt.noQuestions, botName)
+			if got != tt.want {
+				t.Errorf("ensureCorrectTechnicalHeading() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseProductGaps(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{
+			name:  "no gaps section",
+			input: "### Open Questions\n1. Something?\n",
+			want:  nil,
+		},
+		{
+			name: "single gap",
+			input: `### Product Requirements Gaps
+1. The acceptance criteria contradicts the user flow diagram
+`,
+			want: []string{"The acceptance criteria contradicts the user flow diagram"},
+		},
+		{
+			name: "multiple gaps",
+			input: `### Product Requirements Gaps
+1. User flow for edge case X is undefined
+2. Acceptance criteria conflict with mobile requirements
+
+### Implementation Outline
+- [ ] Step 1
+`,
+			want: []string{
+				"User flow for edge case X is undefined",
+				"Acceptance criteria conflict with mobile requirements",
+			},
+		},
+		{
+			name:  "empty gaps section",
+			input: "### Product Requirements Gaps\n\n### Implementation Outline\n",
+			want:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseProductGaps(tt.input)
+			if len(got) != len(tt.want) {
+				t.Fatalf("parseProductGaps() returned %d gaps, want %d\ngot: %v", len(got), len(tt.want), got)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("gap[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestIsProductPhaseComplete(t *testing.T) {
+	tests := []struct {
+		name  string
+		phase string
+		want  bool
+	}{
+		{"product phase", PhaseProduct, false},
+		{"technical phase", PhaseTechnical, true},
+		{"empty phase", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ps := &db.PlanningState{PlanningPhase: tt.phase}
+			if got := IsProductPhaseComplete(ps); got != tt.want {
+				t.Errorf("IsProductPhaseComplete() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsTechnicalPhaseComplete(t *testing.T) {
+	tests := []struct {
+		name          string
+		phase         string
+		questionsJSON string
+		want          bool
+	}{
+		{"product phase", PhaseProduct, "[]", false},
+		{"technical with no questions", PhaseTechnical, "[]", true},
+		{"technical with questions", PhaseTechnical, `["Q1?"]`, false},
+		{"technical with empty json", PhaseTechnical, "", true},
+		{"technical with null json", PhaseTechnical, "null", true},
+		{"empty phase", "", "[]", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ps := &db.PlanningState{
+				PlanningPhase: tt.phase,
+				QuestionsJSON: tt.questionsJSON,
+			}
+			if got := IsTechnicalPhaseComplete(ps); got != tt.want {
+				t.Errorf("IsTechnicalPhaseComplete() = %v, want %v", got, tt.want)
 			}
 		})
 	}

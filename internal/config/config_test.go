@@ -204,4 +204,32 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.MaxReviewRounds != 3 {
 		t.Errorf("MaxReviewRounds = %d, want %d", cfg.MaxReviewRounds, 3)
 	}
+	if cfg.AutoLaunchImplementation {
+		t.Error("AutoLaunchImplementation should default to false")
+	}
+}
+
+func TestLoad_AutoLaunchImplementation(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	for _, key := range []string{
+		"TASK_TRACKER", "TRACKER_API_KEY", "TRACKER_BASE_URL",
+		"TRACKER_PROJECT", "JIRA_EMAIL",
+	} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("TASK_TRACKER", "jira")
+	t.Setenv("TRACKER_API_KEY", "test-key")
+	t.Setenv("TRACKER_BASE_URL", "https://jira.example.com")
+	t.Setenv("TRACKER_PROJECT", "TEST")
+	t.Setenv("JIRA_EMAIL", "bot@example.com")
+	t.Setenv("AUTO_LAUNCH_IMPLEMENTATION", "true")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.AutoLaunchImplementation {
+		t.Error("AutoLaunchImplementation should be true when env is set to 'true'")
+	}
 }

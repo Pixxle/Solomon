@@ -242,6 +242,7 @@ func (pd *PriorityDispatcher) checkPlanningReady(ctx context.Context, activePlan
 			continue
 		}
 
+		// Check for explicit ready signal from human
 		ready, err := pd.tracker.IsReadySignal(ctx, issue, ps.BotCommentID)
 		if err != nil {
 			log.Warn().Err(err).Str("issue", issue.Key).Msg("error checking ready signal")
@@ -252,6 +253,18 @@ func (pd *PriorityDispatcher) checkPlanningReady(ctx context.Context, activePlan
 				log.Debug().Str("issue", issue.Key).Msg("ready signal detected but issue not assigned to bot, staying in planning")
 				continue
 			}
+			return &statemachine.WorkItem{
+				State: statemachine.StatePlanningReady,
+				Issue: issue,
+				Context: map[string]interface{}{
+					"planning_state": ps,
+				},
+			}, nil
+		}
+
+		// Check for auto-launch: both phases complete + assigned + config enabled
+		if planning.AutoLaunchReady(pd.cfg.AutoLaunchImplementation, pd.botUserID, issue, ps) {
+			log.Info().Str("issue", issue.Key).Msg("auto-launch conditions met: both planning phases complete and ticket assigned")
 			return &statemachine.WorkItem{
 				State: statemachine.StatePlanningReady,
 				Issue: issue,

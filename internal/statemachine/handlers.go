@@ -33,10 +33,11 @@ func (h *Handlers) HandleNewIssue(ctx context.Context, item *WorkItem) error {
 }
 
 // HandlePlanningConversation continues the planning conversation,
-// checking for the ready signal first.
+// checking for the ready signal first, then handling phase transitions.
 func (h *Handlers) HandlePlanningConversation(ctx context.Context, item *WorkItem) error {
 	ps := item.Context["planning_state"].(*db.PlanningState)
 
+	// Check for explicit ready signal (human approval to move to implementation)
 	ready, err := h.m.planner.CheckReadySignal(ctx, item.Issue, ps)
 	if err != nil {
 		log.Warn().Err(err).Msg("error checking ready signal")
@@ -52,7 +53,26 @@ func (h *Handlers) HandlePlanningConversation(ctx context.Context, item *WorkIte
 		log.Warn().Err(err).Msg("error checking planning timeout")
 	}
 
-	return h.m.planner.ContinuePlanning(ctx, item.Issue, ps)
+	// ContinuePlanning handles phase transitions internally (product → technical)
+	if err := h.m.planner.ContinuePlanning(ctx, item.Issue, ps); err != nil {
+		return err
+	}
+
+	// After continuing, check if auto-launch conditions are met:
+	// ticket assigned + both phases complete + auto-launch enabled.
+	// Only re-fetch state when auto-launch is enabled to avoid unnecessary DB reads.
+	if h.m.cfg.AutoLaunchImplementation {
+		updatedPS, err := h.m.stateDB.GetPlanningState(item.Issue.Key)
+		if err != nil || updatedPS == nil {
+			return nil
+		}
+		if h.m.planner.ShouldAutoLaunch(item.Issue, updatedPS) {
+			log.Info().Str("issue", item.Issue.Key).Msg("auto-launching implementation (both planning phases complete, ticket assigned)")
+			return h.transitionToImplementation(ctx, item.Issue, updatedPS)
+		}
+	}
+
+	return nil
 }
 
 // HandlePlanningReady transitions a planning-complete issue into implementation.
@@ -280,14 +300,15 @@ func (h *Handlers) transitionToImplementation(ctx context.Context, issue tracker
 	var imagePaths []string
 	_ = json.Unmarshal([]byte(ps.ImageRefsJSON), &imagePaths)
 
-	// The description IS the spec — no need to build conversation text
+	// The description IS the spec; pass product summary as planning context
 	teamPrompt, err := team.BuildTeamLeadPrompt(team.TeamLeadContext{
-		IssueKey:        issue.Key,
-		IssueTitle:      issue.Title,
-		Specification:   issue.Description,
-		BotDisplayName:  h.m.cfg.BotDisplayName,
-		ImagePaths:      imagePaths,
-		MaxReviewRounds: h.m.cfg.MaxReviewRounds,
+		IssueKey:             issue.Key,
+		IssueTitle:           issue.Title,
+		Specification:        issue.Description,
+		PlanningConversation: ps.ProductSummary,
+		BotDisplayName:       h.m.cfg.BotDisplayName,
+		ImagePaths:           imagePaths,
+		MaxReviewRounds:      h.m.cfg.MaxReviewRounds,
 	})
 	if err != nil {
 		return fmt.Errorf("building team lead prompt: %w", err)
