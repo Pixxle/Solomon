@@ -1,6 +1,6 @@
 package db
 
-const schemaVersion = 4
+const schemaVersion = 5
 
 var migrations = [][]string{
 	// v1: Initial schema - each statement separate for SQLite compatibility
@@ -63,5 +63,13 @@ var migrations = [][]string{
 	// v4: Persist product refinement summary across phase transitions
 	{
 		`ALTER TABLE planning_state ADD COLUMN product_summary TEXT NOT NULL DEFAULT ''`,
+	},
+	// v5: Slack thread tracking
+	{
+		`CREATE TABLE IF NOT EXISTS slack_threads (
+			issue_key TEXT PRIMARY KEY,
+			thread_ts TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
 	},
 }

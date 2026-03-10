@@ -13,6 +13,7 @@ import (
 	"github.com/pixxle/codehephaestus/internal/db"
 	"github.com/pixxle/codehephaestus/internal/git"
 	ghclient "github.com/pixxle/codehephaestus/internal/github"
+	"github.com/pixxle/codehephaestus/internal/guardrails"
 	"github.com/pixxle/codehephaestus/internal/team"
 	"github.com/pixxle/codehephaestus/internal/tracker"
 	"github.com/pixxle/codehephaestus/internal/worker"
@@ -91,11 +92,23 @@ func (h *Handlers) HandleReviewFeedback(ctx context.Context, item *WorkItem) err
 	prNumber := item.Context["pr_number"].(int)
 	branch := item.Context["branch"].(string)
 
+	_ = h.m.notifier.NotifyReviewFeedback(ctx, item.Issue.Key, prNumber)
+
 	var codeChangeComments []ghclient.PRComment
 	var questionComments []ghclient.PRComment
 
 	var skippedComments []ghclient.PRComment
 	for _, c := range comments {
+		// Scan each comment for jailbreak attempts before processing
+		commentSource := fmt.Sprintf("PR #%d review comment by %s", prNumber, c.Author)
+		scan := guardrails.ScanForJailbreak(ctx, c.Body, commentSource, h.m.cfg.PlanningModel)
+		if scan.Blocked {
+			log.Warn().Str("issue", item.Issue.Key).Int64("comment", c.ID).Str("author", c.Author).Str("reason", scan.Reason).Msg("jailbreak attempt in review comment, skipping")
+			_ = h.m.notifier.NotifyJailbreakDetected(ctx, item.Issue.Key, commentSource, scan.Reason)
+			h.recordFeedback(item.Issue.Key, prNumber, c, "blocked_jailbreak", nil)
+			continue
+		}
+
 		if c.Reaction == "thumbs_up" {
 			classification := classifyComment(ctx, c.Body, h.m.cfg.PlanningModel)
 			if classification == "question" {
@@ -145,6 +158,7 @@ func (h *Handlers) HandleCIFailure(ctx context.Context, item *WorkItem) error {
 	branch := item.Context["branch"].(string)
 
 	log.Info().Str("issue", item.Issue.Key).Int("pr", prNumber).Msg("handling CI failure")
+	_ = h.m.notifier.NotifyCIFailure(ctx, item.Issue.Key, prNumber)
 
 	ciLogs, err := h.m.github.GetCIFailureLogs(ctx, prNumber)
 	if err != nil {
@@ -204,6 +218,7 @@ func (h *Handlers) CheckMergedPRs(ctx context.Context) {
 			}
 
 			log.Info().Str("issue", issue.Key).Int("pr", prNumber).Msg("PR merged, transitioning to Done")
+			_ = h.m.notifier.NotifyPRMerged(ctx, issue.Key, prNumber)
 			if !h.m.cfg.DryRun {
 				_ = h.m.tracker.TransitionIssue(ctx, issue.Key, h.m.cfg.StatusDone())
 				_ = git.CleanupWorktree(ctx, branch, h.m.cfg.TargetRepoPath, h.m.cfg.WorktreePath)
@@ -279,6 +294,7 @@ func (h *Handlers) CheckCIPassed(ctx context.Context) {
 
 func (h *Handlers) transitionToImplementation(ctx context.Context, issue tracker.Issue, ps *db.PlanningState) error {
 	log.Info().Str("issue", issue.Key).Msg("transitioning to implementation")
+	_ = h.m.notifier.NotifyImplementationStarted(ctx, issue.Key)
 
 	if err := h.m.planner.CompletePlanning(ctx, issue, ps); err != nil {
 		return fmt.Errorf("completing planning: %w", err)
@@ -376,6 +392,7 @@ func (h *Handlers) transitionToImplementation(ctx context.Context, issue tracker
 		return fmt.Errorf("creating PR: %w", err)
 	}
 	log.Info().Str("issue", issue.Key).Int("pr", prNumber).Msg("created draft PR")
+	_ = h.m.notifier.NotifyPRCreated(ctx, issue.Key, prNumber)
 
 	sha, _ := git.GetCurrentSHA(ctx, wtDir)
 	if sha != "" {

@@ -11,6 +11,7 @@ import (
 	"github.com/pixxle/codehephaestus/internal/figma"
 	"github.com/pixxle/codehephaestus/internal/git"
 	ghclient "github.com/pixxle/codehephaestus/internal/github"
+	"github.com/pixxle/codehephaestus/internal/slack"
 	"github.com/pixxle/codehephaestus/internal/statemachine"
 	"github.com/pixxle/codehephaestus/internal/tracker"
 )
@@ -30,9 +31,10 @@ func NewRunner(
 	figmaClient *figma.Client,
 	botUserID string,
 	ghUsername string,
+	notifier slack.Notifier,
 ) *Runner {
 	lp := NewLoopPrevention(stateDB)
-	m := statemachine.NewMachine(cfg, t, gh, stateDB, figmaClient, botUserID)
+	m := statemachine.NewMachine(cfg, t, gh, stateDB, figmaClient, botUserID, notifier)
 	return &Runner{
 		cfg:        cfg,
 		machine:    m,

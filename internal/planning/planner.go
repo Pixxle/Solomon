@@ -15,6 +15,8 @@ import (
 	"github.com/pixxle/codehephaestus/internal/config"
 	"github.com/pixxle/codehephaestus/internal/db"
 	"github.com/pixxle/codehephaestus/internal/figma"
+	"github.com/pixxle/codehephaestus/internal/guardrails"
+	"github.com/pixxle/codehephaestus/internal/slack"
 	"github.com/pixxle/codehephaestus/internal/tracker"
 	"github.com/pixxle/codehephaestus/internal/worker"
 )
@@ -51,15 +53,17 @@ type Planner struct {
 	stateDB   *db.StateDB
 	figma     *figma.Client // may be nil
 	botUserID string
+	notifier  slack.Notifier
 }
 
-func NewPlanner(cfg *config.Config, t tracker.TaskTracker, stateDB *db.StateDB, figmaClient *figma.Client, botUserID string) *Planner {
+func NewPlanner(cfg *config.Config, t tracker.TaskTracker, stateDB *db.StateDB, figmaClient *figma.Client, botUserID string, notifier slack.Notifier) *Planner {
 	return &Planner{
 		cfg:       cfg,
 		tracker:   t,
 		stateDB:   stateDB,
 		figma:     figmaClient,
 		botUserID: botUserID,
+		notifier:  notifier,
 	}
 }
 
@@ -78,6 +82,11 @@ func (p *Planner) StartPlanning(ctx context.Context, issue tracker.Issue) error 
 	figmaURLs := figma.ExtractFigmaURLs(issue.Description)
 	figmaURLsJSON, _ := json.Marshal(figmaURLs)
 	imageRefsJSON, _ := json.Marshal(images)
+
+	// Scan issue description for jailbreak attempts before sending to LLM
+	if err := p.scanDescription(ctx, issue.Key, issue.Description, "description"); err != nil {
+		return err
+	}
 
 	// Generate initial product requirements comment via claude
 	prompt, err := worker.RenderPrompt("planning_initial.md.tmpl", map[string]interface{}{
@@ -140,6 +149,12 @@ func (p *Planner) StartPlanning(ctx context.Context, issue tracker.Issue) error 
 
 	log.Info().Str("issue", issue.Key).Int("questions", len(questions)).Str("phase", PhaseProduct).Msg("planning conversation started")
 
+	_ = p.notifier.NotifyStartedScoping(ctx, issue.Key, issue.Title)
+	_ = p.notifier.NotifyPlanningPhase(ctx, issue.Key, PhaseProduct)
+	if len(questions) > 0 {
+		_ = p.notifier.NotifyQuestions(ctx, issue.Key, PhaseProduct, len(questions))
+	}
+
 	// If the initial analysis produced no open questions, auto-transition to technical phase
 	if len(questions) == 0 {
 		log.Info().Str("issue", issue.Key).Msg("product requirements complete on initial analysis, transitioning to technical refinement")
@@ -162,6 +177,11 @@ func (p *Planner) ContinuePlanning(ctx context.Context, issue tracker.Issue, ps 
 	// Load open questions
 	var openQuestions []string
 	_ = json.Unmarshal([]byte(ps.QuestionsJSON), &openQuestions)
+
+	// Scan updated description for jailbreak attempts
+	if err := p.scanDescription(ctx, issue.Key, issue.Description, "updated description"); err != nil {
+		return err
+	}
 
 	// Select the appropriate follow-up template based on phase
 	templateName := "planning_followup.md.tmpl"
@@ -227,7 +247,13 @@ func (p *Planner) ContinuePlanning(ctx context.Context, issue tracker.Issue, ps 
 	// Check for automatic phase transition: product → technical
 	if phase == PhaseProduct && len(remainingQuestions) == 0 {
 		log.Info().Str("issue", issue.Key).Msg("product requirements complete, transitioning to technical refinement")
+		_ = p.notifier.NotifyQuestionsResolved(ctx, issue.Key, PhaseProduct)
 		return p.transitionToTechnicalPhase(ctx, issue, ps, output)
+	}
+
+	// Notify when technical phase has 0 remaining questions
+	if phase == PhaseTechnical && len(remainingQuestions) == 0 {
+		_ = p.notifier.NotifyQuestionsResolved(ctx, issue.Key, PhaseTechnical)
 	}
 
 	if err := p.stateDB.UpdatePlanningState(ps); err != nil {
@@ -300,6 +326,12 @@ func (p *Planner) StartTechnicalRefinement(ctx context.Context, issue tracker.Is
 	}
 
 	log.Info().Str("issue", issue.Key).Int("questions", len(questions)).Str("phase", PhaseTechnical).Msg("technical refinement started")
+
+	_ = p.notifier.NotifyPlanningPhase(ctx, issue.Key, PhaseTechnical)
+	if len(questions) > 0 {
+		_ = p.notifier.NotifyQuestions(ctx, issue.Key, PhaseTechnical, len(questions))
+	}
+
 	return nil
 }
 
@@ -500,6 +532,8 @@ func (p *Planner) revertToProductPhase(ctx context.Context, issue tracker.Issue,
 	log.Info().Str("issue", issue.Key).Int("product_gaps", len(productGaps)).
 		Msg("product requirements gaps detected during technical refinement, reverting to product phase")
 
+	_ = p.notifier.NotifyPhaseRevert(ctx, issue.Key, PhaseTechnical, PhaseProduct)
+
 	questionsJSON, _ := json.Marshal(productGaps)
 	now := time.Now().UTC()
 	ps.LastSeenDescription = issue.Description
@@ -596,6 +630,18 @@ func ensureCorrectProductHeading(output string, noQuestions bool, botName string
 
 func ensureCorrectTechnicalHeading(output string, noQuestions bool, botName string) string {
 	return ensureCorrectHeading(output, noQuestions, botName, "Technical Refinement", "Technical Refinement Complete")
+}
+
+// scanDescription runs a jailbreak scan on issue description content.
+// Returns an error if a jailbreak attempt is detected (blocking the calling operation).
+func (p *Planner) scanDescription(ctx context.Context, issueKey, content, label string) error {
+	source := fmt.Sprintf("issue %s %s", issueKey, label)
+	scan := guardrails.ScanForJailbreak(ctx, content, source, p.cfg.PlanningModel)
+	if scan.Blocked {
+		_ = p.notifier.NotifyJailbreakDetected(ctx, issueKey, label, scan.Reason)
+		return fmt.Errorf("jailbreak attempt detected in %s: %s", source, scan.Reason)
+	}
+	return nil
 }
 
 func isImageMime(mime string) bool {

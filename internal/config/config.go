@@ -58,6 +58,13 @@ type Config struct {
 	FigmaExportScale  int
 	FigmaExportFormat string
 
+	// Slack (optional — enabled when SLACK_BOT_TOKEN and SLACK_CHANNEL_ID are set)
+	SlackBotToken         string
+	SlackChannelID        string
+	SlackStandupEnabled   bool
+	SlackStandupHour      int
+	SlackStandupChannelID string
+
 	// Implementation
 	MaxReviewRounds  int
 	MaxCIFixAttempts int
@@ -128,6 +135,12 @@ func Load(envPath string) (*Config, error) {
 		FigmaAccessToken:  os.Getenv("FIGMA_ACCESS_TOKEN"),
 		FigmaExportScale:  envOrDefaultInt("FIGMA_EXPORT_SCALE", 2),
 		FigmaExportFormat: envOrDefault("FIGMA_EXPORT_FORMAT", "png"),
+
+		SlackBotToken:         os.Getenv("SLACK_BOT_TOKEN"),
+		SlackChannelID:        os.Getenv("SLACK_CHANNEL_ID"),
+		SlackStandupEnabled:   os.Getenv("SLACK_STANDUP_ENABLED") == "true",
+		SlackStandupHour:      envOrDefaultInt("SLACK_STANDUP_HOUR", 9),
+		SlackStandupChannelID: os.Getenv("SLACK_STANDUP_CHANNEL_ID"),
 
 		MaxReviewRounds:  envOrDefaultInt("MAX_REVIEW_ROUNDS", 3),
 		MaxCIFixAttempts: envOrDefaultInt("MAX_CI_FIX_ATTEMPTS", 5),
@@ -223,6 +236,10 @@ func (c *Config) BotSlug() string {
 		}
 	}
 	return string(result)
+}
+
+func (c *Config) SlackEnabled() bool {
+	return c.SlackBotToken != "" && c.SlackChannelID != ""
 }
 
 func envOrDefault(key, fallback string) string {

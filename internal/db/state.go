@@ -316,6 +316,24 @@ func (s *StateDB) PruneOldRecords(olderThan time.Duration) error {
 	return err
 }
 
+// Slack thread operations
+
+func (s *StateDB) GetSlackThread(issueKey string) (string, error) {
+	var threadTS string
+	err := s.db.QueryRow("SELECT thread_ts FROM slack_threads WHERE issue_key = ?", issueKey).Scan(&threadTS)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return threadTS, err
+}
+
+func (s *StateDB) UpsertSlackThread(issueKey, threadTS string) error {
+	_, err := s.db.Exec(`INSERT INTO slack_threads (issue_key, thread_ts, created_at) VALUES (?, ?, ?)
+		ON CONFLICT(issue_key) DO UPDATE SET thread_ts = ?`,
+		issueKey, threadTS, timeStr(time.Now().UTC()), threadTS)
+	return err
+}
+
 func timeStr(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }

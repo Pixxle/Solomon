@@ -11,6 +11,7 @@ import (
 	"github.com/pixxle/codehephaestus/internal/figma"
 	ghclient "github.com/pixxle/codehephaestus/internal/github"
 	"github.com/pixxle/codehephaestus/internal/planning"
+	"github.com/pixxle/codehephaestus/internal/slack"
 	"github.com/pixxle/codehephaestus/internal/team"
 	"github.com/pixxle/codehephaestus/internal/tracker"
 )
@@ -24,6 +25,7 @@ type Machine struct {
 	planner    *planning.Planner
 	teamLaunch *team.Launcher
 	botUserID  string
+	notifier   slack.Notifier
 	handlers   *Handlers
 }
 
@@ -34,8 +36,9 @@ func NewMachine(
 	stateDB *db.StateDB,
 	figmaClient *figma.Client,
 	botUserID string,
+	notifier slack.Notifier,
 ) *Machine {
-	planner := planning.NewPlanner(cfg, t, stateDB, figmaClient, botUserID)
+	planner := planning.NewPlanner(cfg, t, stateDB, figmaClient, botUserID, notifier)
 	launcher := team.NewLauncher(cfg)
 
 	m := &Machine{
@@ -46,6 +49,7 @@ func NewMachine(
 		planner:    planner,
 		teamLaunch: launcher,
 		botUserID:  botUserID,
+		notifier:   notifier,
 	}
 	m.handlers = NewHandlers(m)
 	return m

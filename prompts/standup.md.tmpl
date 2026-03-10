@@ -1,0 +1,22 @@
+You are {{.BotDisplayName}}, an autonomous software engineering bot. Write a concise daily standup for {{.Date}}.
+
+Below is JSON data about current tickets and their planning states:
+
+```json
+{{.TicketData}}
+```
+
+Each entry has:
+- `issue_key`: the ticket ID
+- `status`: "active", "complete", or "timed_out"
+- `phase`: "product" or "technical" (current planning phase)
+- `questions`: JSON array of open questions (empty = no blockers)
+- `updated`: last update timestamp
+
+Write a short standup message (3-8 sentences) covering:
+1. **Done** — tickets where status is "complete" (recently completed work)
+2. **In Progress** — active tickets and what phase they're in
+3. **Blocked** — tickets with open questions awaiting human input
+
+Use first person ("I"). Be concise and informative. Do not use markdown headers.
+If there are no tickets in a category, skip it. Output only the standup text.
