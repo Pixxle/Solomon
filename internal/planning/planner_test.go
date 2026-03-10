@@ -1,6 +1,10 @@
 package planning
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/pixxle/codehephaestus/internal/db"
+)
 
 func TestParseQuestions(t *testing.T) {
 	tests := []struct {
@@ -225,6 +229,54 @@ func TestParseProductGaps(t *testing.T) {
 				if got[i] != tt.want[i] {
 					t.Errorf("gap[%d] = %q, want %q", i, got[i], tt.want[i])
 				}
+			}
+		})
+	}
+}
+
+func TestIsProductPhaseComplete(t *testing.T) {
+	tests := []struct {
+		name  string
+		phase string
+		want  bool
+	}{
+		{"product phase", PhaseProduct, false},
+		{"technical phase", PhaseTechnical, true},
+		{"empty phase", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ps := &db.PlanningState{PlanningPhase: tt.phase}
+			if got := IsProductPhaseComplete(ps); got != tt.want {
+				t.Errorf("IsProductPhaseComplete() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsTechnicalPhaseComplete(t *testing.T) {
+	tests := []struct {
+		name          string
+		phase         string
+		questionsJSON string
+		want          bool
+	}{
+		{"product phase", PhaseProduct, "[]", false},
+		{"technical with no questions", PhaseTechnical, "[]", true},
+		{"technical with questions", PhaseTechnical, `["Q1?"]`, false},
+		{"technical with empty json", PhaseTechnical, "", true},
+		{"empty phase", "", "[]", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ps := &db.PlanningState{
+				PlanningPhase: tt.phase,
+				QuestionsJSON: tt.questionsJSON,
+			}
+			if got := IsTechnicalPhaseComplete(ps); got != tt.want {
+				t.Errorf("IsTechnicalPhaseComplete() = %v, want %v", got, tt.want)
 			}
 		})
 	}

@@ -86,9 +86,19 @@ func TestPlanningStateCRUD(t *testing.T) {
 		t.Errorf("QuestionsJSON = %q, want %q", got.QuestionsJSON, `["Q1?"]`)
 	}
 
-	// Update
+	// Verify default values for new fields
+	if got.PlanningPhase != "product" {
+		t.Errorf("PlanningPhase = %q, want %q", got.PlanningPhase, "product")
+	}
+	if got.ProductSummary != "" {
+		t.Errorf("ProductSummary = %q, want empty", got.ProductSummary)
+	}
+
+	// Update including new fields
 	ps.Status = "complete"
 	ps.QuestionsJSON = "[]"
+	ps.PlanningPhase = "technical"
+	ps.ProductSummary = "Product requirements are settled."
 	if err := db.UpdatePlanningState(ps); err != nil {
 		t.Fatalf("UpdatePlanningState() error: %v", err)
 	}
@@ -99,6 +109,12 @@ func TestPlanningStateCRUD(t *testing.T) {
 	}
 	if got.Status != "complete" {
 		t.Errorf("Status after update = %q, want %q", got.Status, "complete")
+	}
+	if got.PlanningPhase != "technical" {
+		t.Errorf("PlanningPhase after update = %q, want %q", got.PlanningPhase, "technical")
+	}
+	if got.ProductSummary != "Product requirements are settled." {
+		t.Errorf("ProductSummary after update = %q, want %q", got.ProductSummary, "Product requirements are settled.")
 	}
 
 	// Get non-existent
