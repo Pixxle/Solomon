@@ -33,7 +33,9 @@ Analyze this issue from a **technical implementation** perspective. Explore the 
 - Performance considerations — are there scale or performance concerns?
 - Testing strategy — what testing approach is appropriate?
 
-Do NOT re-ask product requirements questions. The product specification is settled.
+Generally, the product specification is settled. However, if during your technical analysis you discover that the product requirements have gaps or ambiguities that MUST be resolved before implementation can proceed (e.g. the description contradicts itself, a critical user flow is undefined, or an acceptance criterion is impossible to implement as stated), flag these under a **### Product Requirements Gaps** section. This will send the issue back to product refinement.
+
+Only flag genuine product gaps — do not re-ask questions that were already answered. Technical decisions (e.g. which library to use, how to structure the database) belong in the technical Open Questions section, not in Product Requirements Gaps.
 
 Produce a technical analysis comment in the following format:
 
@@ -58,6 +60,16 @@ Produce a technical analysis comment in the following format:
 - [ ] [Major implementation step 1]
 - [ ] [Major implementation step 2]
 ```
+
+If you discover product requirements gaps, add this section BEFORE the Implementation Outline:
+
+```
+### Product Requirements Gaps
+1. [Specific product-level gap that blocks implementation]
+2. [Continue as needed]
+```
+
+When this section is present, the issue will be returned to product requirements refinement to resolve these gaps before continuing technical analysis.
 
 Ask specific, actionable technical questions. Each question should help resolve a concrete technical decision.
 

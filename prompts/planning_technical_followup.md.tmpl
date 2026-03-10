@@ -22,7 +22,9 @@ Compare the previous and current descriptions. Determine:
 2. Whether new technical ambiguities have been introduced
 3. Whether the technical specification is now sufficient for implementation
 
-Remember: focus on technical implementation questions only (architecture, data models, APIs, dependencies, testing). The product requirements are settled.
+Focus on technical implementation questions (architecture, data models, APIs, dependencies, testing). The product requirements are generally settled.
+
+However, if the description changes have introduced or revealed product-level gaps (contradictions, undefined user flows, impossible acceptance criteria), flag these under a **### Product Requirements Gaps** section. This will return the issue to product refinement. Only flag genuine product gaps — technical decisions belong in the technical Open Questions section.
 
 If there ARE remaining or new technical questions, produce an updated comment:
 
@@ -37,6 +39,9 @@ If there ARE remaining or new technical questions, produce an updated comment:
 
 ### Open Questions
 1. [Remaining or new technical question]
+
+### Product Requirements Gaps
+1. [Only if product-level gaps were discovered — omit this section if none]
 
 ### Implementation Outline
 - [ ] [Updated implementation steps]

@@ -12,8 +12,9 @@ const (
 	// StatePlanning — active planning conversation (product or technical phase)
 	// with new human comments. The planning_phase field in the DB determines
 	// which phase is active: "product" for product requirements refinement,
-	// "technical" for technical refinement. Phase transitions happen automatically
-	// when all questions in a phase are resolved.
+	// "technical" for technical refinement. Phase transitions are bidirectional:
+	// product → technical when product questions are resolved, and
+	// technical → product when the AI detects product requirement gaps.
 	// Action: continue the planning conversation (or detect ready signal).
 	StatePlanning State = "planning"
 
@@ -46,6 +47,7 @@ var ValidTransitions = []Transition{
 	{StateTodo, StatePlanning, "issue detected with planning label or assignment"},
 	{StatePlanning, StatePlanning, "description updated during product or technical refinement"},
 	{StatePlanning, StatePlanning, "product refinement complete, auto-transition to technical refinement"},
+	{StatePlanning, StatePlanning, "product requirements gaps found, revert from technical to product refinement"},
 	{StatePlanning, StatePlanningReady, "human signals ready or auto-launch after both phases complete"},
 	{StatePlanningReady, "in_progress", "description updated, implementation begins"},
 	{"in_progress", "in_progress", "CI failure fixed or devil's advocate rework"},

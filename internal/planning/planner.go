@@ -181,6 +181,37 @@ func (p *Planner) ContinuePlanning(ctx context.Context, issue tracker.Issue, ps 
 
 	// Parse remaining questions from output
 	remainingQuestions := parseQuestions(cleanOutput)
+
+	// During technical phase, check if the AI flagged product requirements gaps
+	if phase == PhaseTechnical {
+		productGaps := parseProductGaps(cleanOutput)
+		if len(productGaps) > 0 {
+			log.Info().Str("issue", issue.Key).Int("product_gaps", len(productGaps)).
+				Msg("product requirements gaps detected during technical refinement, reverting to product phase")
+			// Transition back to product phase with the gaps as questions
+			questionsJSON, _ := json.Marshal(productGaps)
+			now := time.Now().UTC()
+			ps.LastSeenDescription = issue.Description
+			ps.QuestionsJSON = string(questionsJSON)
+			ps.PlanningPhase = PhaseProduct
+			ps.LastSystemCommentAt = &now
+
+			// Rewrite heading to reflect product phase
+			output := ensureCorrectProductHeading(cleanOutput, false, p.cfg.BotDisplayName)
+			// Replace "Technical Refinement" heading with product heading if present
+			output = strings.Replace(output,
+				fmt.Sprintf("## %s — Technical Refinement\n", p.cfg.BotDisplayName),
+				fmt.Sprintf("## %s — Product Requirements Refinement\n", p.cfg.BotDisplayName), 1)
+
+			p.updateBotComment(ctx, issue.Key, ps, output)
+
+			if err := p.stateDB.UpdatePlanningState(ps); err != nil {
+				return fmt.Errorf("updating planning state for product revert: %w", err)
+			}
+			return nil
+		}
+	}
+
 	questionsJSON, _ := json.Marshal(remainingQuestions)
 
 	// Ensure heading reflects question state based on phase
@@ -191,25 +222,7 @@ func (p *Planner) ContinuePlanning(ctx context.Context, issue tracker.Issue, ps 
 		output = ensureCorrectProductHeading(cleanOutput, len(remainingQuestions) == 0, p.cfg.BotDisplayName)
 	}
 
-	// Update comment in-place; fallback to new comment if update fails
-	if !p.cfg.DryRun {
-		if ps.BotCommentID != "" {
-			if err := p.tracker.UpdateComment(ctx, issue.Key, ps.BotCommentID, output); err != nil {
-				log.Warn().Err(err).Str("issue", issue.Key).Msg("failed to update comment, posting new one")
-				newID, postErr := p.tracker.AddCommentReturningID(ctx, issue.Key, output)
-				if postErr != nil {
-					return fmt.Errorf("posting fallback comment: %w", postErr)
-				}
-				ps.BotCommentID = newID
-			}
-		} else {
-			newID, err := p.tracker.AddCommentReturningID(ctx, issue.Key, output)
-			if err != nil {
-				return fmt.Errorf("posting planning comment: %w", err)
-			}
-			ps.BotCommentID = newID
-		}
-	}
+	p.updateBotComment(ctx, issue.Key, ps, output)
 
 	// Update state
 	now := time.Now().UTC()
@@ -265,30 +278,34 @@ func (p *Planner) StartTechnicalRefinement(ctx context.Context, issue tracker.Is
 	}
 
 	cleanOutput := stripPreamble(result.Output, p.cfg.BotDisplayName)
+
+	// Check if the initial technical analysis immediately found product gaps
+	productGaps := parseProductGaps(cleanOutput)
+	if len(productGaps) > 0 {
+		log.Info().Str("issue", issue.Key).Int("product_gaps", len(productGaps)).
+			Msg("product requirements gaps detected at start of technical refinement, reverting to product phase")
+		questionsJSON, _ := json.Marshal(productGaps)
+		now := time.Now().UTC()
+		ps.QuestionsJSON = string(questionsJSON)
+		ps.PlanningPhase = PhaseProduct
+		ps.LastSystemCommentAt = &now
+
+		output := strings.Replace(cleanOutput,
+			fmt.Sprintf("## %s — Technical Refinement\n", p.cfg.BotDisplayName),
+			fmt.Sprintf("## %s — Product Requirements Refinement\n", p.cfg.BotDisplayName), 1)
+		p.updateBotComment(ctx, issue.Key, ps, output)
+
+		if err := p.stateDB.UpdatePlanningState(ps); err != nil {
+			return fmt.Errorf("updating planning state for product revert: %w", err)
+		}
+		return nil
+	}
+
 	questions := parseQuestions(cleanOutput)
 	questionsJSON, _ := json.Marshal(questions)
 
 	output := ensureCorrectTechnicalHeading(cleanOutput, len(questions) == 0, p.cfg.BotDisplayName)
-
-	// Update the existing bot comment with the technical analysis
-	if !p.cfg.DryRun {
-		if ps.BotCommentID != "" {
-			if err := p.tracker.UpdateComment(ctx, issue.Key, ps.BotCommentID, output); err != nil {
-				log.Warn().Err(err).Str("issue", issue.Key).Msg("failed to update comment for technical phase, posting new one")
-				newID, postErr := p.tracker.AddCommentReturningID(ctx, issue.Key, output)
-				if postErr != nil {
-					return fmt.Errorf("posting technical planning comment: %w", postErr)
-				}
-				ps.BotCommentID = newID
-			}
-		} else {
-			newID, err := p.tracker.AddCommentReturningID(ctx, issue.Key, output)
-			if err != nil {
-				return fmt.Errorf("posting technical planning comment: %w", err)
-			}
-			ps.BotCommentID = newID
-		}
-	}
+	p.updateBotComment(ctx, issue.Key, ps, output)
 
 	now := time.Now().UTC()
 	ps.QuestionsJSON = string(questionsJSON)
@@ -407,14 +424,23 @@ func (p *Planner) CheckTimeout(ctx context.Context, issue tracker.Issue, ps *db.
 var questionsRe = regexp.MustCompile(`(?m)^\d+\.\s+(.+)`)
 
 func parseQuestions(output string) []string {
-	// Find the Open Questions section
-	sectionStart := strings.Index(output, "### Open Questions")
+	return parseSection(output, "### Open Questions")
+}
+
+// parseProductGaps extracts numbered items from the ### Product Requirements Gaps section.
+// When present during technical refinement, this triggers a transition back to product phase.
+func parseProductGaps(output string) []string {
+	return parseSection(output, "### Product Requirements Gaps")
+}
+
+func parseSection(output, heading string) []string {
+	sectionStart := strings.Index(output, heading)
 	if sectionStart == -1 {
 		return nil
 	}
 
 	// Extract text until the next ### heading or end of string
-	rest := output[sectionStart+len("### Open Questions"):]
+	rest := output[sectionStart+len(heading):]
 	nextSection := strings.Index(rest, "\n### ")
 	if nextSection != -1 {
 		rest = rest[:nextSection]
@@ -484,6 +510,31 @@ func (p *Planner) collectImages(ctx context.Context, issue tracker.Issue) ([]str
 	}
 
 	return imagePaths, nil
+}
+
+// updateBotComment updates the bot's comment in-place, falling back to a new comment if update fails.
+func (p *Planner) updateBotComment(ctx context.Context, issueKey string, ps *db.PlanningState, content string) {
+	if p.cfg.DryRun {
+		return
+	}
+	if ps.BotCommentID != "" {
+		if err := p.tracker.UpdateComment(ctx, issueKey, ps.BotCommentID, content); err != nil {
+			log.Warn().Err(err).Str("issue", issueKey).Msg("failed to update comment, posting new one")
+			newID, postErr := p.tracker.AddCommentReturningID(ctx, issueKey, content)
+			if postErr != nil {
+				log.Error().Err(postErr).Str("issue", issueKey).Msg("failed to post fallback comment")
+				return
+			}
+			ps.BotCommentID = newID
+		}
+	} else {
+		newID, err := p.tracker.AddCommentReturningID(ctx, issueKey, content)
+		if err != nil {
+			log.Error().Err(err).Str("issue", issueKey).Msg("failed to post planning comment")
+			return
+		}
+		ps.BotCommentID = newID
+	}
 }
 
 // stripPreamble removes any text before the expected heading.
