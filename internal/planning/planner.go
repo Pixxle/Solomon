@@ -139,6 +139,13 @@ func (p *Planner) StartPlanning(ctx context.Context, issue tracker.Issue) error 
 	}
 
 	log.Info().Str("issue", issue.Key).Int("questions", len(questions)).Str("phase", PhaseProduct).Msg("planning conversation started")
+
+	// If the initial analysis produced no open questions, auto-transition to technical phase
+	if len(questions) == 0 {
+		log.Info().Str("issue", issue.Key).Msg("product requirements complete on initial analysis, transitioning to technical refinement")
+		return p.transitionToTechnicalPhase(ctx, issue, ps, output)
+	}
+
 	return nil
 }
 
@@ -220,16 +227,7 @@ func (p *Planner) ContinuePlanning(ctx context.Context, issue tracker.Issue, ps 
 	// Check for automatic phase transition: product → technical
 	if phase == PhaseProduct && len(remainingQuestions) == 0 {
 		log.Info().Str("issue", issue.Key).Msg("product requirements complete, transitioning to technical refinement")
-		// Save the product refinement output as the product summary
-		ps.ProductSummary = output
-		ps.PlanningPhase = PhaseTechnical
-		// Reset questions for the new phase — they'll be populated by StartTechnicalRefinement
-		ps.QuestionsJSON = db.EmptyJSONArray
-		if err := p.stateDB.UpdatePlanningState(ps); err != nil {
-			return fmt.Errorf("updating planning state for phase transition: %w", err)
-		}
-		// Immediately start technical refinement
-		return p.StartTechnicalRefinement(ctx, issue, ps)
+		return p.transitionToTechnicalPhase(ctx, issue, ps, output)
 	}
 
 	if err := p.stateDB.UpdatePlanningState(ps); err != nil {
@@ -238,6 +236,18 @@ func (p *Planner) ContinuePlanning(ctx context.Context, issue tracker.Issue, ps 
 
 	log.Info().Str("issue", issue.Key).Int("remaining_questions", len(remainingQuestions)).Str("phase", phase).Msg("planning comment updated")
 	return nil
+}
+
+// transitionToTechnicalPhase mutates ps to reflect the product→technical
+// transition, persists it, and kicks off StartTechnicalRefinement.
+func (p *Planner) transitionToTechnicalPhase(ctx context.Context, issue tracker.Issue, ps *db.PlanningState, productSummary string) error {
+	ps.ProductSummary = productSummary
+	ps.PlanningPhase = PhaseTechnical
+	ps.QuestionsJSON = db.EmptyJSONArray
+	if err := p.stateDB.UpdatePlanningState(ps); err != nil {
+		return fmt.Errorf("updating planning state for phase transition: %w", err)
+	}
+	return p.StartTechnicalRefinement(ctx, issue, ps)
 }
 
 // StartTechnicalRefinement begins the technical refinement phase.
