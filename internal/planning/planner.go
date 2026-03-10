@@ -158,7 +158,7 @@ func (p *Planner) ContinuePlanning(ctx context.Context, issue tracker.Issue, ps 
 	}
 
 	// Generate follow-up via claude
-	prompt, err := worker.RenderPrompt(templateName, map[string]interface{}{
+	templateData := map[string]interface{}{
 		"IssueKey":            issue.Key,
 		"IssueTitle":          issue.Title,
 		"PreviousDescription": ps.LastSeenDescription,
@@ -166,7 +166,11 @@ func (p *Planner) ContinuePlanning(ctx context.Context, issue tracker.Issue, ps 
 		"OpenQuestions":       openQuestions,
 		"BotDisplayName":      p.cfg.BotDisplayName,
 		"ReadyInstruction":    p.tracker.ReadySignalInstruction(),
-	})
+	}
+	if phase == PhaseTechnical {
+		templateData["ProductSummary"] = ps.ProductSummary
+	}
+	prompt, err := worker.RenderPrompt(templateName, templateData)
 	if err != nil {
 		return fmt.Errorf("rendering follow-up prompt: %w", err)
 	}
@@ -233,6 +237,8 @@ func (p *Planner) ContinuePlanning(ctx context.Context, issue tracker.Issue, ps 
 	// Check for automatic phase transition: product → technical
 	if phase == PhaseProduct && len(remainingQuestions) == 0 {
 		log.Info().Str("issue", issue.Key).Msg("product requirements complete, transitioning to technical refinement")
+		// Save the product refinement output as the product summary
+		ps.ProductSummary = output
 		ps.PlanningPhase = PhaseTechnical
 		// Reset questions for the new phase — they'll be populated by StartTechnicalRefinement
 		ps.QuestionsJSON = db.EmptyJSONArray
@@ -267,6 +273,7 @@ func (p *Planner) StartTechnicalRefinement(ctx context.Context, issue tracker.Is
 		"BotDisplayName":   p.cfg.BotDisplayName,
 		"Images":           images,
 		"ReadyInstruction": p.tracker.ReadySignalInstruction(),
+		"ProductSummary":   ps.ProductSummary,
 	})
 	if err != nil {
 		return fmt.Errorf("rendering technical planning prompt: %w", err)

@@ -8,6 +8,13 @@ IMPORTANT: Do NOT delegate work to subagents or spawn agent teams. You must prod
 ## Description (product-approved specification)
 {{.Description}}
 
+{{if .ProductSummary}}
+## Product Requirements Summary
+The following was the output of the product requirements refinement phase. Use this as context for your technical analysis — these are the agreed product decisions, acceptance criteria, and edge cases.
+
+{{.ProductSummary}}
+{{end}}
+
 {{if .AcceptanceCriteria}}
 ## Acceptance Criteria
 {{.AcceptanceCriteria}}

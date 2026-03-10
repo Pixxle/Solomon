@@ -268,14 +268,15 @@ func (h *Handlers) transitionToImplementation(ctx context.Context, issue tracker
 	var imagePaths []string
 	_ = json.Unmarshal([]byte(ps.ImageRefsJSON), &imagePaths)
 
-	// The description IS the spec — no need to build conversation text
+	// The description IS the spec; pass product summary as planning context
 	teamPrompt, err := team.BuildTeamLeadPrompt(team.TeamLeadContext{
-		IssueKey:        issue.Key,
-		IssueTitle:      issue.Title,
-		Specification:   issue.Description,
-		BotDisplayName:  h.m.cfg.BotDisplayName,
-		ImagePaths:      imagePaths,
-		MaxReviewRounds: h.m.cfg.MaxReviewRounds,
+		IssueKey:             issue.Key,
+		IssueTitle:           issue.Title,
+		Specification:        issue.Description,
+		PlanningConversation: ps.ProductSummary,
+		BotDisplayName:       h.m.cfg.BotDisplayName,
+		ImagePaths:           imagePaths,
+		MaxReviewRounds:      h.m.cfg.MaxReviewRounds,
 	})
 	if err != nil {
 		return fmt.Errorf("building team lead prompt: %w", err)

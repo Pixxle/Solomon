@@ -11,6 +11,11 @@ IMPORTANT: Do NOT delegate work to subagents or spawn agent teams. You must prod
 ## Current Description (updated by the human)
 {{.CurrentDescription}}
 
+{{if .ProductSummary}}
+## Product Requirements Summary
+{{.ProductSummary}}
+{{end}}
+
 ## Open Questions From Previous Technical Analysis
 {{range $i, $q := .OpenQuestions}}{{$n := add $i 1}}{{$n}}. {{$q}}
 {{end}}
