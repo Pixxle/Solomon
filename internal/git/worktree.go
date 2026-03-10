@@ -45,11 +45,8 @@ func EnsureWorktree(ctx context.Context, branch, repoPath, worktreeBase string) 
 		return wtDir, nil
 	}
 
-	// New branch from main
-	baseBranch := "main"
-	if err := run(ctx, repoPath, "git", "rev-parse", "--verify", "main"); err != nil {
-		baseBranch = "master"
-	}
+	// New branch from default branch
+	baseBranch := defaultBranch(ctx, repoPath)
 	if err := run(ctx, repoPath, "git", "worktree", "add", wtDir, "-b", branch, baseBranch); err != nil {
 		return "", fmt.Errorf("creating worktree for new branch: %w", err)
 	}
@@ -62,6 +59,9 @@ func CleanupWorktree(ctx context.Context, branch, repoPath, worktreeBase string)
 
 	_ = run(ctx, repoPath, "git", "worktree", "remove", "--force", wtDir)
 	_ = run(ctx, repoPath, "git", "worktree", "prune")
+	// Delete the local branch ref to prevent stale refs from interfering
+	// with future worktree creation if the same issue is reopened.
+	_ = run(ctx, repoPath, "git", "branch", "-D", branch)
 	return nil
 }
 
@@ -98,14 +98,34 @@ func GetCurrentSHA(ctx context.Context, cwd string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
-// DiffFromMain returns the diff between main (or master) and HEAD.
-func DiffFromMain(ctx context.Context, cwd string) (string, error) {
-	return output(ctx, cwd, "git", "diff", "main...HEAD")
+// defaultBranch returns "main" or "master" depending on which exists in cwd.
+func defaultBranch(ctx context.Context, cwd string) string {
+	if err := run(ctx, cwd, "git", "rev-parse", "--verify", "main"); err != nil {
+		return "master"
+	}
+	return "main"
 }
 
-// CommitLogFromMain returns the oneline commit log between main and HEAD.
+// DiffFromMain returns the diff between the default branch and HEAD.
+func DiffFromMain(ctx context.Context, cwd string) (string, error) {
+	base := defaultBranch(ctx, cwd)
+	return output(ctx, cwd, "git", "diff", base+"...HEAD")
+}
+
+// CommitLogFromMain returns the oneline commit log between the default branch and HEAD.
 func CommitLogFromMain(ctx context.Context, cwd string) (string, error) {
-	return output(ctx, cwd, "git", "log", "main...HEAD", "--oneline")
+	base := defaultBranch(ctx, cwd)
+	return output(ctx, cwd, "git", "log", base+"...HEAD", "--oneline")
+}
+
+// HasCommitsAheadOfMain returns true if HEAD has commits that the default branch does not.
+func HasCommitsAheadOfMain(ctx context.Context, cwd string) (bool, error) {
+	base := defaultBranch(ctx, cwd)
+	out, err := output(ctx, cwd, "git", "rev-list", "--count", base+"..HEAD")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) != "0", nil
 }
 
 func run(ctx context.Context, dir string, name string, args ...string) error {

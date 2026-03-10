@@ -10,6 +10,7 @@ import (
 
 	"github.com/pixxle/codehephaestus/internal/config"
 	"github.com/pixxle/codehephaestus/internal/db"
+	"github.com/pixxle/codehephaestus/internal/git"
 	ghclient "github.com/pixxle/codehephaestus/internal/github"
 	"github.com/pixxle/codehephaestus/internal/planning"
 	"github.com/pixxle/codehephaestus/internal/statemachine"
@@ -67,6 +68,7 @@ func (pd *PriorityDispatcher) FindWork(ctx context.Context) (*statemachine.WorkI
 	// Reconcile tracker state periodically (every 5 minutes, not every poll cycle).
 	if time.Since(pd.lastReconcileCheck) >= 5*time.Minute {
 		pd.reconcileTrackerState(ctx, allStates, todoMap)
+		pd.adoptUnknownAssignedIssues(ctx)
 		pd.lastReconcileCheck = time.Now()
 	}
 
@@ -105,7 +107,7 @@ func (pd *PriorityDispatcher) FindWork(ctx context.Context) (*statemachine.WorkI
 	}
 
 	// Priority 5: New issues
-	if item := pd.checkNewIssues(activePlans, todoIssues); item != nil {
+	if item := pd.checkNewIssues(allStates, todoIssues); item != nil {
 		return item, nil
 	}
 
@@ -278,10 +280,12 @@ func (pd *PriorityDispatcher) checkPlanningReady(ctx context.Context, activePlan
 	return nil, nil
 }
 
-func (pd *PriorityDispatcher) checkNewIssues(activePlans []*db.PlanningState, todoIssues []tracker.Issue) *statemachine.WorkItem {
-	// Build set of issues that already have planning state
-	hasPlanning := make(map[string]bool, len(activePlans))
-	for _, ps := range activePlans {
+func (pd *PriorityDispatcher) checkNewIssues(allStates []*db.PlanningState, todoIssues []tracker.Issue) *statemachine.WorkItem {
+	// Build set of issues that already have ANY planning state (not just active).
+	// This prevents emitting StateTodo for issues with stale/complete rows that
+	// haven't been cleaned up by reconciliation yet.
+	hasPlanning := make(map[string]bool, len(allStates))
+	for _, ps := range allStates {
 		hasPlanning[ps.IssueKey] = true
 	}
 
@@ -359,7 +363,7 @@ func (pd *PriorityDispatcher) recordDoneTickets(ctx context.Context) {
 // reconcileTrackerState detects when humans move tickets on the tracker board
 // and fixes stale bot state. Two rules:
 //   - Rule 1: Issue is in TODO but has a non-active planning_state → reopened.
-//     Delete old state + bot comment so planning starts fresh.
+//     Delete old state + bot comment + close PR so planning starts fresh.
 //   - Rule 2: Issue is NOT in TODO but has an active planning_state → moved out.
 //     Mark planning complete (stale).
 func (pd *PriorityDispatcher) reconcileTrackerState(ctx context.Context, allStates []*db.PlanningState, todoMap map[string]tracker.Issue) {
@@ -368,6 +372,8 @@ func (pd *PriorityDispatcher) reconcileTrackerState(ctx context.Context, allStat
 
 		if inTodo && ps.Status != planning.StatusActive {
 			// Rule 1: reopened ticket — clear old state so it starts fresh.
+			// Also close any open PR and clean up the worktree/branch.
+			pd.cleanupPRForIssue(ctx, issue)
 			if ready, _ := pd.tracker.IsReadySignal(ctx, issue, ps.BotCommentID); ready {
 				if err := pd.tracker.ClearReadySignal(ctx, ps.IssueKey); err != nil {
 					log.Warn().Err(err).Str("issue", ps.IssueKey).Msg("reconcile: failed to clear ready signal (best-effort)")
@@ -391,6 +397,67 @@ func (pd *PriorityDispatcher) reconcileTrackerState(ctx context.Context, allStat
 				continue
 			}
 			log.Info().Str("issue", ps.IssueKey).Msg("reconcile: marked active planning as complete (ticket moved out of TODO)")
+		}
+	}
+}
+
+// cleanupPRForIssue closes any open PR and cleans up the worktree/branch for an issue.
+// Best-effort: logs warnings on failure but does not return errors.
+func (pd *PriorityDispatcher) cleanupPRForIssue(ctx context.Context, issue tracker.Issue) {
+	branch := pd.tracker.GetIssueBranchName(issue, pd.cfg.BotSlug())
+	prNumber, err := pd.github.FindOpenPRForBranch(ctx, branch)
+	if err != nil {
+		log.Warn().Err(err).Str("issue", issue.Key).Msg("reconcile: failed to check for open PR")
+		return
+	}
+	if prNumber == 0 {
+		return
+	}
+	if pd.cfg.DryRun {
+		log.Info().Str("issue", issue.Key).Int("pr", prNumber).Msg("[dry-run] reconcile: would close PR and delete branch")
+		return
+	}
+	log.Info().Str("issue", issue.Key).Int("pr", prNumber).Msg("reconcile: closing PR and deleting branch for reopened ticket")
+	if err := pd.github.ClosePR(ctx, prNumber, true); err != nil {
+		log.Warn().Err(err).Str("issue", issue.Key).Int("pr", prNumber).Msg("reconcile: failed to close PR")
+	}
+	if err := git.CleanupWorktree(ctx, branch, pd.cfg.TargetRepoPath, pd.cfg.WorktreePath); err != nil {
+		log.Warn().Err(err).Str("issue", issue.Key).Msg("reconcile: failed to clean up worktree")
+	}
+}
+
+// adoptUnknownAssignedIssues detects issues assigned to the bot in non-TODO
+// statuses (In Progress, In Review) that have no planning state — meaning the
+// bot didn't create them. It moves them back to TODO so they enter the normal
+// planning flow. Uses live DB lookups per issue to avoid stale snapshot issues
+// (e.g. when recordDoneTickets inserts rows in the same cycle).
+func (pd *PriorityDispatcher) adoptUnknownAssignedIssues(ctx context.Context) {
+	for _, status := range []string{pd.cfg.StatusInProgress(), pd.cfg.StatusInReview()} {
+		issues, err := pd.tracker.FetchIssuesByStatus(ctx, status)
+		if err != nil {
+			log.Warn().Err(err).Str("status", status).Msg("reconcile: failed to fetch issues for adoption check")
+			continue
+		}
+		for _, issue := range issues {
+			if !issue.IsAssignedTo(pd.botUserID) {
+				continue
+			}
+			existing, err := pd.stateDB.GetPlanningState(issue.Key)
+			if err != nil {
+				log.Warn().Err(err).Str("issue", issue.Key).Msg("reconcile: failed to check planning state for adoption")
+				continue
+			}
+			if existing != nil {
+				continue
+			}
+			if pd.cfg.DryRun {
+				log.Info().Str("issue", issue.Key).Str("status", status).Msg("[dry-run] reconcile: would move unknown issue to TODO for planning")
+				continue
+			}
+			log.Info().Str("issue", issue.Key).Str("status", status).Msg("reconcile: unknown issue assigned to bot, moving to TODO for planning")
+			if err := pd.tracker.TransitionIssue(ctx, issue.Key, pd.cfg.StatusTodo()); err != nil {
+				log.Warn().Err(err).Str("issue", issue.Key).Msg("reconcile: failed to transition issue to TODO")
+			}
 		}
 	}
 }

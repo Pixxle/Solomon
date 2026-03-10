@@ -339,6 +339,18 @@ func (h *Handlers) transitionToImplementation(ctx context.Context, issue tracker
 		}
 	}
 
+	hasCommits, err := git.HasCommitsAheadOfMain(ctx, wtDir)
+	if err != nil {
+		return fmt.Errorf("checking commits: %w", err)
+	}
+	if !hasCommits {
+		log.Warn().Str("issue", issue.Key).Msg("agent team produced no commits, leaving issue In Progress for manual intervention")
+		_ = h.m.tracker.AddComment(ctx, issue.Key,
+			fmt.Sprintf("## %s — No Changes Produced\n\nThe agent team session completed but produced no commits. Leaving this issue In Progress for manual intervention.",
+				h.m.cfg.BotDisplayName))
+		return nil
+	}
+
 	if err := h.m.github.PushBranch(ctx, branch, wtDir); err != nil {
 		return fmt.Errorf("pushing branch: %w", err)
 	}
