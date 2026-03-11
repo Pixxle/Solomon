@@ -1,4 +1,4 @@
-module github.com/pixxle/codehephaestus
+module github.com/pixxle/solomon
 
 go 1.26
 

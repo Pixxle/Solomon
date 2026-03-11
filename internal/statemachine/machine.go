@@ -6,14 +6,14 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/pixxle/codehephaestus/internal/config"
-	"github.com/pixxle/codehephaestus/internal/db"
-	"github.com/pixxle/codehephaestus/internal/figma"
-	ghclient "github.com/pixxle/codehephaestus/internal/github"
-	"github.com/pixxle/codehephaestus/internal/planning"
-	"github.com/pixxle/codehephaestus/internal/slack"
-	"github.com/pixxle/codehephaestus/internal/team"
-	"github.com/pixxle/codehephaestus/internal/tracker"
+	"github.com/pixxle/solomon/internal/config"
+	"github.com/pixxle/solomon/internal/db"
+	"github.com/pixxle/solomon/internal/figma"
+	ghclient "github.com/pixxle/solomon/internal/github"
+	"github.com/pixxle/solomon/internal/planning"
+	"github.com/pixxle/solomon/internal/slack"
+	"github.com/pixxle/solomon/internal/team"
+	"github.com/pixxle/solomon/internal/tracker"
 )
 
 // Machine routes work items to the correct state handler.

@@ -5,8 +5,8 @@ import (
 
 	slackapi "github.com/slack-go/slack"
 
-	"github.com/pixxle/codehephaestus/internal/config"
-	"github.com/pixxle/codehephaestus/internal/db"
+	"github.com/pixxle/solomon/internal/config"
+	"github.com/pixxle/solomon/internal/db"
 )
 
 // Notifier sends lifecycle notifications for ticket processing.

@@ -8,7 +8,7 @@ import (
 	"github.com/rs/zerolog/log"
 	slackapi "github.com/slack-go/slack"
 
-	"github.com/pixxle/codehephaestus/internal/db"
+	"github.com/pixxle/solomon/internal/db"
 )
 
 // SlackNotifier posts threaded messages to Slack, one thread per ticket.

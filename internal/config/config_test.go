@@ -10,7 +10,7 @@ func TestBotSlug(t *testing.T) {
 		displayName string
 		want        string
 	}{
-		{"CodeHephaestus", "codehephaestus"},
+		{"Solomon", "solomon"},
 		{"My Cool Bot", "my-cool-bot"},
 		{"Bot 2.0!", "bot-20"},
 		{"UPPER CASE", "upper-case"},
@@ -186,11 +186,11 @@ func TestLoad_Defaults(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if cfg.BotDisplayName != "CodeHephaestus" {
-		t.Errorf("BotDisplayName = %q, want %q", cfg.BotDisplayName, "CodeHephaestus")
+	if cfg.BotDisplayName != "Solomon" {
+		t.Errorf("BotDisplayName = %q, want %q", cfg.BotDisplayName, "Solomon")
 	}
-	if cfg.JiraPlanningLabel != "codehephaestus" {
-		t.Errorf("JiraPlanningLabel = %q, want %q", cfg.JiraPlanningLabel, "codehephaestus")
+	if cfg.JiraPlanningLabel != "solomon" {
+		t.Errorf("JiraPlanningLabel = %q, want %q", cfg.JiraPlanningLabel, "solomon")
 	}
 	if cfg.JiraApprovalLabel != "approved" {
 		t.Errorf("JiraApprovalLabel = %q, want %q", cfg.JiraApprovalLabel, "approved")
