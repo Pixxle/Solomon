@@ -55,7 +55,7 @@ Respond with ONLY a JSON object:
 	}
 
 	var result ScanResult
-	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &result); err != nil {
+	if err := json.Unmarshal([]byte(worker.StripCodeFence(output)), &result); err != nil {
 		log.Warn().Err(err).Str("output", output).Str("source", source).Msg("failed to parse jailbreak scan result, allowing content through")
 		return &ScanResult{Blocked: false}
 	}

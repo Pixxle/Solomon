@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -507,7 +506,7 @@ Respond with ONLY a JSON object: {"type": "code_change"} or {"type": "question"}
 	var result struct {
 		Type string `json:"type"`
 	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &result); err != nil {
+	if err := json.Unmarshal([]byte(worker.StripCodeFence(output)), &result); err != nil {
 		return "code_change"
 	}
 	return result.Type
@@ -528,7 +527,7 @@ Respond with ONLY a JSON object: {"is_question": true} or {"is_question": false}
 	var result struct {
 		IsQuestion bool `json:"is_question"`
 	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &result); err != nil {
+	if err := json.Unmarshal([]byte(worker.StripCodeFence(output)), &result); err != nil {
 		return false
 	}
 	return result.IsQuestion

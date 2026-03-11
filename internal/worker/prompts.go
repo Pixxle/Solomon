@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"text/template"
 )
 
@@ -69,4 +70,19 @@ func RenderPrompt(templateName string, data interface{}) (string, error) {
 	}
 
 	return buf.String(), nil
+}
+
+// StripCodeFence removes markdown code fences (```json ... ```) that LLMs
+// sometimes wrap around JSON output despite being told not to.
+func StripCodeFence(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "```") {
+		if i := strings.Index(s, "\n"); i != -1 {
+			s = s[i+1:]
+		}
+		if i := strings.LastIndex(s, "```"); i != -1 {
+			s = s[:i]
+		}
+	}
+	return strings.TrimSpace(s)
 }
