@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pixxle/codehephaestus/internal/config"
+	"github.com/pixxle/solomon/internal/config"
 )
 
 type TaskTracker interface {

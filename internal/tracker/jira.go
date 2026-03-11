@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pixxle/codehephaestus/internal/config"
+	"github.com/pixxle/solomon/internal/config"
 )
 
 type JiraTracker struct {

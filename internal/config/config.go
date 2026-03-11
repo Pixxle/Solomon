@@ -102,13 +102,13 @@ func Load(envPath string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		BotDisplayName: envOrDefault("BOT_DISPLAY_NAME", "CodeHephaestus"),
+		BotDisplayName: envOrDefault("BOT_DISPLAY_NAME", "Solomon"),
 
 		TaskTracker:       TrackerType(envOrDefault("TASK_TRACKER", "jira")),
 		TrackerAPIKey:     os.Getenv("TRACKER_API_KEY"),
 		TrackerBaseURL:    os.Getenv("TRACKER_BASE_URL"),
 		TrackerProject:    os.Getenv("TRACKER_PROJECT"),
-		JiraPlanningLabel: envOrDefault("JIRA_PLANNING_LABEL", "codehephaestus"),
+		JiraPlanningLabel: envOrDefault("JIRA_PLANNING_LABEL", "solomon"),
 		JiraApprovalLabel: envOrDefault("JIRA_APPROVAL_LABEL", "approved"),
 		JiraEmail:         os.Getenv("JIRA_EMAIL"),
 
@@ -162,7 +162,7 @@ func Load(envPath string) (*Config, error) {
 	}
 
 	if cfg.StateDBPath == "" {
-		cfg.StateDBPath = cfg.TargetRepoPath + "/.codehephaestus/state.db"
+		cfg.StateDBPath = cfg.TargetRepoPath + "/.solomon/state.db"
 	}
 
 	if err := cfg.validate(); err != nil {

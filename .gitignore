@@ -1,5 +1,5 @@
 .env
 *.log
 .worktrees/
-.codehephaestus/
-codehephaestus
+.solomon/
+solomon

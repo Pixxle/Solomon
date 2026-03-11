@@ -9,13 +9,13 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/pixxle/codehephaestus/internal/db"
-	"github.com/pixxle/codehephaestus/internal/git"
-	ghclient "github.com/pixxle/codehephaestus/internal/github"
-	"github.com/pixxle/codehephaestus/internal/guardrails"
-	"github.com/pixxle/codehephaestus/internal/team"
-	"github.com/pixxle/codehephaestus/internal/tracker"
-	"github.com/pixxle/codehephaestus/internal/worker"
+	"github.com/pixxle/solomon/internal/db"
+	"github.com/pixxle/solomon/internal/git"
+	ghclient "github.com/pixxle/solomon/internal/github"
+	"github.com/pixxle/solomon/internal/guardrails"
+	"github.com/pixxle/solomon/internal/team"
+	"github.com/pixxle/solomon/internal/tracker"
+	"github.com/pixxle/solomon/internal/worker"
 )
 
 // Handlers contains the logic for each state transition.

@@ -8,13 +8,13 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/pixxle/codehephaestus/internal/config"
-	"github.com/pixxle/codehephaestus/internal/db"
-	"github.com/pixxle/codehephaestus/internal/git"
-	ghclient "github.com/pixxle/codehephaestus/internal/github"
-	"github.com/pixxle/codehephaestus/internal/planning"
-	"github.com/pixxle/codehephaestus/internal/statemachine"
-	"github.com/pixxle/codehephaestus/internal/tracker"
+	"github.com/pixxle/solomon/internal/config"
+	"github.com/pixxle/solomon/internal/db"
+	"github.com/pixxle/solomon/internal/git"
+	ghclient "github.com/pixxle/solomon/internal/github"
+	"github.com/pixxle/solomon/internal/planning"
+	"github.com/pixxle/solomon/internal/statemachine"
+	"github.com/pixxle/solomon/internal/tracker"
 )
 
 const githubBotSuffix = "[bot]"

@@ -12,13 +12,13 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/pixxle/codehephaestus/internal/config"
-	"github.com/pixxle/codehephaestus/internal/db"
-	"github.com/pixxle/codehephaestus/internal/figma"
-	"github.com/pixxle/codehephaestus/internal/guardrails"
-	"github.com/pixxle/codehephaestus/internal/slack"
-	"github.com/pixxle/codehephaestus/internal/tracker"
-	"github.com/pixxle/codehephaestus/internal/worker"
+	"github.com/pixxle/solomon/internal/config"
+	"github.com/pixxle/solomon/internal/db"
+	"github.com/pixxle/solomon/internal/figma"
+	"github.com/pixxle/solomon/internal/guardrails"
+	"github.com/pixxle/solomon/internal/slack"
+	"github.com/pixxle/solomon/internal/tracker"
+	"github.com/pixxle/solomon/internal/worker"
 )
 
 // DescriptionChanged reports whether the issue description differs from the last analyzed version.
@@ -479,7 +479,7 @@ func (p *Planner) collectImages(ctx context.Context, issue tracker.Issue) ([]str
 		return nil, err
 	}
 
-	imgDir := filepath.Join(p.cfg.TargetRepoPath, ".codehephaestus", "images", issue.Key)
+	imgDir := filepath.Join(p.cfg.TargetRepoPath, ".solomon", "images", issue.Key)
 	if err := os.MkdirAll(imgDir, 0o755); err != nil {
 		return nil, err
 	}

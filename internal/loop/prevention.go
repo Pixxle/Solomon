@@ -3,7 +3,7 @@ package loop
 import (
 	"time"
 
-	"github.com/pixxle/codehephaestus/internal/db"
+	"github.com/pixxle/solomon/internal/db"
 )
 
 const (

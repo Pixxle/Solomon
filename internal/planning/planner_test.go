@@ -3,7 +3,7 @@ package planning
 import (
 	"testing"
 
-	"github.com/pixxle/codehephaestus/internal/db"
+	"github.com/pixxle/solomon/internal/db"
 )
 
 func TestParseQuestions(t *testing.T) {
