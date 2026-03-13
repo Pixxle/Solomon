@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -69,9 +70,10 @@ type Config struct {
 	AgentTeamTimeout int
 
 	// Runtime
+	DataPath       string // base directory for all Solomon data (default ~/.solomon)
 	TargetRepoPath string
-	WorktreePath   string
-	StateDBPath    string
+	WorktreePath   string // derived: DataPath/worktrees
+	StateDBPath    string // derived: DataPath/state.db
 
 	// Logging
 	LogLevel string
@@ -140,24 +142,21 @@ func Load(envPath string) (*Config, error) {
 		AgentTeamTimeout: envOrDefaultInt("AGENT_TEAM_TIMEOUT", 3600),
 
 		TargetRepoPath: envOrDefault("TARGET_REPO_PATH", "."),
-		WorktreePath:   os.Getenv("WORKTREE_PATH"),
-		StateDBPath:    os.Getenv("STATE_DB_PATH"),
 
 		LogLevel:        envOrDefault("LOG_LEVEL", "info"),
 		SimplifyEnabled: os.Getenv("SIMPLIFY_ENABLED") != "false",
 	}
 
-	if cfg.WorktreePath == "" {
-		cfg.WorktreePath = cfg.TargetRepoPath + "/.worktrees"
-	}
-
-	if cfg.StateDBPath == "" {
+	cfg.DataPath = os.Getenv("SOLOMON_DATA_PATH")
+	if cfg.DataPath == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return nil, fmt.Errorf("resolving home directory: %w", err)
 		}
-		cfg.StateDBPath = home + "/.solomon/state.db"
+		cfg.DataPath = filepath.Join(home, ".solomon")
 	}
+	cfg.WorktreePath = filepath.Join(cfg.DataPath, "worktrees")
+	cfg.StateDBPath = filepath.Join(cfg.DataPath, "state.db")
 
 	if err := cfg.validate(); err != nil {
 		return nil, err

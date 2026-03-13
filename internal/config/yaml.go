@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -20,7 +21,7 @@ type YAMLConfig struct {
 // GlobalConfig holds application-wide settings.
 type GlobalConfig struct {
 	BotDisplayName string           `yaml:"bot_display_name"`
-	StateDBPath    string           `yaml:"state_db_path"`
+	DataPath       string           `yaml:"data_path"`
 	Claude         ClaudeYAMLConfig `yaml:"claude"`
 	Slack          SlackYAMLConfig  `yaml:"slack"`
 	Figma          FigmaYAMLConfig  `yaml:"figma"`
@@ -163,15 +164,14 @@ func (y *YAMLConfig) ToConfig() (*Config, error) {
 		targetRepoPath = y.Repos[0].Path
 	}
 
-	stateDBPath := y.Global.StateDBPath
-	if stateDBPath == "" {
+	dataPath := y.Global.DataPath
+	if dataPath == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return nil, fmt.Errorf("resolving home directory: %w", err)
 		}
-		stateDBPath = home + "/.solomon/state.db"
+		dataPath = filepath.Join(home, ".solomon")
 	}
-	worktreePath := targetRepoPath + "/.worktrees"
 
 	cfg := &Config{
 		BotDisplayName: orDefault(y.Global.BotDisplayName, "Solomon"),
@@ -206,9 +206,10 @@ func (y *YAMLConfig) ToConfig() (*Config, error) {
 
 		AgentTeamTimeout: orDefaultInt(y.Global.Claude.AgentTeamTimeout, 3600),
 
+		DataPath:        dataPath,
 		TargetRepoPath:  targetRepoPath,
-		WorktreePath:    worktreePath,
-		StateDBPath:     stateDBPath,
+		WorktreePath:    filepath.Join(dataPath, "worktrees"),
+		StateDBPath:     filepath.Join(dataPath, "state.db"),
 		LogLevel:        orDefault(y.Global.LogLevel, "info"),
 		SimplifyEnabled: true,
 	}
@@ -229,7 +230,7 @@ func GenerateFromEnv(cfg *Config) *YAMLConfig {
 	y := &YAMLConfig{
 		Global: GlobalConfig{
 			BotDisplayName: cfg.BotDisplayName,
-			StateDBPath:    cfg.StateDBPath,
+			DataPath:       cfg.DataPath,
 			Claude: ClaudeYAMLConfig{
 				TeamLeadModel:    cfg.TeamLeadModel,
 				TeammateModel:    cfg.TeammateModel,

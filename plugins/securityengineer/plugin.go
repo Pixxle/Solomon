@@ -224,7 +224,7 @@ func (p *SecurityEngineerPlugin) runFullScan(ctx context.Context, repoName, repo
 		model = "sonnet"
 	}
 
-	outputDir := filepath.Join(".solomon", "security-output", repoName)
+	outputDir := filepath.Join(p.libs.Config.DataPath, "security-output", repoName)
 	os.MkdirAll(outputDir, 0755)
 
 	pipeline := NewPipeline(outputDir, parallelAgents, model)

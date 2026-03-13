@@ -4,7 +4,7 @@
 
 global:
   bot_display_name: Solomon
-  state_db_path: ""  # defaults to <first repo path>/.solomon/state.db
+  data_path: ""      # defaults to ~/.solomon (stores state.db, worktrees, security-output)
   log_level: info     # debug, info, warn, error
 
   claude:
