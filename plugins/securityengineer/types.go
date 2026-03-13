@@ -1,6 +1,13 @@
 package securityengineer
 
-import "github.com/pixxle/solomon/internal/db"
+import (
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/pixxle/solomon/internal/db"
+)
 
 // Severity levels.
 const (
@@ -71,6 +78,133 @@ type RawFinding struct {
 	CodeSuggestion    string `json:"code_suggestion,omitempty"`
 	FalsePositiveRisk string `json:"false_positive_risk,omitempty"`
 	Fingerprint       string `json:"fingerprint"`
+}
+
+// UnmarshalJSON handles LLM response variations where fields like remediation
+// may be returned as objects instead of strings, or location may be nested.
+func (r *RawFinding) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	// getString extracts a JSON string value, returning "" for null or non-string types.
+	getString := func(key string) string {
+		v, ok := raw[key]
+		if !ok || string(v) == "null" {
+			return ""
+		}
+		var s string
+		if err := json.Unmarshal(v, &s); err != nil {
+			return ""
+		}
+		return s
+	}
+
+	// getInt extracts an integer, handling both int and float JSON numbers.
+	getInt := func(key string) int {
+		v, ok := raw[key]
+		if !ok || string(v) == "null" {
+			return 0
+		}
+		var f float64
+		if err := json.Unmarshal(v, &f); err != nil {
+			return 0
+		}
+		return int(f)
+	}
+
+	// flattenObject converts a JSON object to "key: value; key: value" with sorted keys.
+	flattenObject := func(v json.RawMessage) string {
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(v, &m); err != nil {
+			return strings.TrimSpace(string(v))
+		}
+		parts := make([]string, 0, len(m))
+		for k, val := range m {
+			var s string
+			if err := json.Unmarshal(val, &s); err != nil {
+				s = strings.TrimSpace(string(val))
+			}
+			parts = append(parts, fmt.Sprintf("%s: %s", k, s))
+		}
+		sort.Strings(parts)
+		return strings.Join(parts, "; ")
+	}
+
+	// getFlexString extracts a string or flattens an object/array to a readable string.
+	getFlexString := func(key string) string {
+		v, ok := raw[key]
+		if !ok || string(v) == "null" {
+			return ""
+		}
+		var s string
+		if err := json.Unmarshal(v, &s); err == nil {
+			return s
+		}
+		return flattenObject(v)
+	}
+
+	r.Agent = getString("agent")
+	r.Title = getString("title")
+	r.Description = getString("description")
+	r.Severity = getString("severity")
+	r.Confidence = getString("confidence")
+	r.Priority = getString("priority")
+	r.Category = getString("category")
+	r.CweID = getString("cwe_id")
+	r.OwaspCategory = getString("owasp_category")
+	r.Evidence = getString("evidence")
+	r.Source = getString("source")
+	r.SourceTool = getString("source_tool")
+	r.RemediationEffort = getString("remediation_effort")
+	r.FalsePositiveRisk = getString("false_positive_risk")
+	r.Fingerprint = getString("fingerprint")
+
+	// These fields may come back as objects from the LLM.
+	r.Remediation = getFlexString("remediation")
+	r.CodeSuggestion = getFlexString("code_suggestion")
+
+	// finding_id or id
+	r.FindingID = getString("finding_id")
+	if r.FindingID == "" {
+		r.FindingID = getString("id")
+	}
+
+	// Handle flat or nested location for file path / lines / snippet.
+	r.FilePath = getString("file_path")
+	r.LineStart = getInt("line_start")
+	r.LineEnd = getInt("line_end")
+	r.Snippet = getString("snippet")
+
+	if locRaw, ok := raw["location"]; ok {
+		var loc struct {
+			File      string `json:"file"`
+			FilePath  string `json:"file_path"`
+			LineStart int    `json:"line_start"`
+			LineEnd   int    `json:"line_end"`
+			Snippet   string `json:"snippet"`
+		}
+		if err := json.Unmarshal(locRaw, &loc); err == nil {
+			if r.FilePath == "" {
+				r.FilePath = loc.File
+				if r.FilePath == "" {
+					r.FilePath = loc.FilePath
+				}
+			}
+			if r.LineStart == 0 {
+				r.LineStart = loc.LineStart
+			}
+			if r.LineEnd == 0 {
+				r.LineEnd = loc.LineEnd
+			}
+			if r.Snippet == "" {
+				r.Snippet = loc.Snippet
+			}
+		}
+	}
+
+	return nil
 }
 
 // ToolResult records what happened when a tool was executed.
