@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -527,7 +528,7 @@ func (s *StateDB) GetSecurityFindingsWithoutJira(repoName string, minSeverity st
 		"low":      2,
 		"info":     1,
 	}
-	minLevel := severityOrder[minSeverity]
+	minLevel := severityOrder[strings.ToLower(minSeverity)]
 
 	var allowed []string
 	for sev, level := range severityOrder {

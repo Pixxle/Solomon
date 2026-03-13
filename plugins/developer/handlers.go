@@ -1,4 +1,4 @@
-package statemachine
+package developer
 
 import (
 	"context"
@@ -9,16 +9,14 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/pixxle/codehephaestus/internal/db"
-	"github.com/pixxle/codehephaestus/internal/git"
-	ghclient "github.com/pixxle/codehephaestus/internal/github"
-	"github.com/pixxle/codehephaestus/internal/guardrails"
-	"github.com/pixxle/codehephaestus/internal/team"
-	"github.com/pixxle/codehephaestus/internal/tracker"
-	"github.com/pixxle/codehephaestus/internal/worker"
+	"github.com/pixxle/solomon/internal/claude"
+	"github.com/pixxle/solomon/internal/db"
+	"github.com/pixxle/solomon/internal/git"
+	ghclient "github.com/pixxle/solomon/internal/github"
+	"github.com/pixxle/solomon/internal/guardrails"
+	"github.com/pixxle/solomon/internal/tracker"
 )
 
-// Handlers contains the logic for each state transition.
 type Handlers struct {
 	m *Machine
 }
@@ -27,17 +25,13 @@ func NewHandlers(m *Machine) *Handlers {
 	return &Handlers{m: m}
 }
 
-// HandleNewIssue begins the planning conversation for a fresh To Do issue.
 func (h *Handlers) HandleNewIssue(ctx context.Context, item *WorkItem) error {
 	return h.m.planner.StartPlanning(ctx, item.Issue)
 }
 
-// HandlePlanningConversation continues the planning conversation,
-// checking for the ready signal first, then handling phase transitions.
 func (h *Handlers) HandlePlanningConversation(ctx context.Context, item *WorkItem) error {
 	ps := item.Context["planning_state"].(*db.PlanningState)
 
-	// Check for explicit ready signal (human approval to move to implementation)
 	ready, err := h.m.planner.CheckReadySignal(ctx, item.Issue, ps)
 	if err != nil {
 		log.Warn().Err(err).Msg("error checking ready signal")
@@ -53,14 +47,10 @@ func (h *Handlers) HandlePlanningConversation(ctx context.Context, item *WorkIte
 		log.Warn().Err(err).Msg("error checking planning timeout")
 	}
 
-	// ContinuePlanning handles phase transitions internally (product → technical)
 	if err := h.m.planner.ContinuePlanning(ctx, item.Issue, ps); err != nil {
 		return err
 	}
 
-	// After continuing, check if auto-launch conditions are met:
-	// ticket assigned + both phases complete + auto-launch enabled.
-	// Only re-fetch state when auto-launch is enabled to avoid unnecessary DB reads.
 	if h.m.cfg.AutoLaunchImplementation {
 		updatedPS, err := h.m.stateDB.GetPlanningState(item.Issue.Key)
 		if err != nil || updatedPS == nil {
@@ -75,7 +65,6 @@ func (h *Handlers) HandlePlanningConversation(ctx context.Context, item *WorkIte
 	return nil
 }
 
-// HandlePlanningReady transitions a planning-complete issue into implementation.
 func (h *Handlers) HandlePlanningReady(ctx context.Context, item *WorkItem) error {
 	if !item.Issue.IsAssignedTo(h.m.botUserID) {
 		log.Info().Str("issue", item.Issue.Key).Msg("HandlePlanningReady called but issue not assigned to bot, skipping")
@@ -85,7 +74,6 @@ func (h *Handlers) HandlePlanningReady(ctx context.Context, item *WorkItem) erro
 	return h.transitionToImplementation(ctx, item.Issue, ps)
 }
 
-// HandleReviewFeedback addresses PR review comments (questions and code changes).
 func (h *Handlers) HandleReviewFeedback(ctx context.Context, item *WorkItem) error {
 	comments := item.Context["comments"].([]ghclient.PRComment)
 	prNumber := item.Context["pr_number"].(int)
@@ -95,10 +83,9 @@ func (h *Handlers) HandleReviewFeedback(ctx context.Context, item *WorkItem) err
 
 	var codeChangeComments []ghclient.PRComment
 	var questionComments []ghclient.PRComment
-
 	var skippedComments []ghclient.PRComment
+
 	for _, c := range comments {
-		// Scan each comment for jailbreak attempts before processing
 		commentSource := fmt.Sprintf("PR #%d review comment by %s", prNumber, c.Author)
 		scan := guardrails.ScanForJailbreak(ctx, c.Body, commentSource, h.m.cfg.PlanningModel)
 		if scan.Blocked {
@@ -118,7 +105,6 @@ func (h *Handlers) HandleReviewFeedback(ctx context.Context, item *WorkItem) err
 		} else if c.Reaction == "eyes" {
 			questionComments = append(questionComments, c)
 		} else {
-			// Unreacted comment: classify as question or skip
 			if classifyIsQuestion(ctx, c.Body, h.m.cfg.PlanningModel) {
 				questionComments = append(questionComments, c)
 			} else {
@@ -151,7 +137,6 @@ func (h *Handlers) HandleReviewFeedback(ctx context.Context, item *WorkItem) err
 	return nil
 }
 
-// HandleCIFailure fixes a CI failure on an In Progress PR.
 func (h *Handlers) HandleCIFailure(ctx context.Context, item *WorkItem) error {
 	prNumber := item.Context["pr_number"].(int)
 	branch := item.Context["branch"].(string)
@@ -171,7 +156,7 @@ func (h *Handlers) HandleCIFailure(ctx context.Context, item *WorkItem) error {
 	defer git.CleanupWorktree(ctx, branch, h.m.cfg.TargetRepoPath, h.m.cfg.WorktreePath)
 
 	diff, _ := git.DiffFromMain(ctx, wtDir)
-	prompt, err := team.BuildCIFixPrompt(item.Issue.Key, ciLogs, diff, item.Issue.Description)
+	prompt, err := BuildCIFixPrompt(item.Issue.Key, ciLogs, diff, item.Issue.Description)
 	if err != nil {
 		return err
 	}
@@ -181,7 +166,7 @@ func (h *Handlers) HandleCIFailure(ctx context.Context, item *WorkItem) error {
 		return nil
 	}
 
-	_, err = worker.RunClaude(ctx, prompt, wtDir, h.m.cfg.TeammateModel)
+	_, err = claude.RunClaude(ctx, prompt, wtDir, h.m.cfg.TeammateModel)
 	if err != nil {
 		return fmt.Errorf("running CI fix: %w", err)
 	}
@@ -198,7 +183,6 @@ func (h *Handlers) HandleCIFailure(ctx context.Context, item *WorkItem) error {
 	return nil
 }
 
-// CheckMergedPRs transitions merged PRs to Done.
 func (h *Handlers) CheckMergedPRs(ctx context.Context) {
 	for _, status := range []string{h.m.cfg.StatusInProgress(), h.m.cfg.StatusInReview()} {
 		issues, err := h.m.tracker.FetchIssuesByStatus(ctx, status)
@@ -234,7 +218,6 @@ func (h *Handlers) CheckMergedPRs(ctx context.Context) {
 	}
 }
 
-// CheckClosedTickets closes open PRs and deletes branches for tickets moved to Done or Cancelled.
 func (h *Handlers) CheckClosedTickets(ctx context.Context) {
 	cutoff := time.Now().Add(-7 * 24 * time.Hour)
 	for _, status := range []string{h.m.cfg.StatusDone(), h.m.cfg.StatusCancelled()} {
@@ -264,7 +247,6 @@ func (h *Handlers) CheckClosedTickets(ctx context.Context) {
 	}
 }
 
-// CheckCIPassed transitions In Progress issues to In Review when CI passes.
 func (h *Handlers) CheckCIPassed(ctx context.Context) {
 	issues, err := h.m.tracker.FetchIssuesByStatus(ctx, h.m.cfg.StatusInProgress())
 	if err != nil {
@@ -315,8 +297,7 @@ func (h *Handlers) transitionToImplementation(ctx context.Context, issue tracker
 	var imagePaths []string
 	_ = json.Unmarshal([]byte(ps.ImageRefsJSON), &imagePaths)
 
-	// The description IS the spec; pass product summary as planning context
-	teamPrompt, err := team.BuildTeamLeadPrompt(team.TeamLeadContext{
+	teamPrompt, err := BuildTeamLeadPrompt(TeamLeadContext{
 		IssueKey:             issue.Key,
 		IssueTitle:           issue.Title,
 		Specification:        issue.Description,
@@ -343,10 +324,9 @@ func (h *Handlers) transitionToImplementation(ctx context.Context, issue tracker
 		return nil
 	}
 
-	// Run /simplify to clean up the implementation before creating the PR
 	if h.m.cfg.SimplifyEnabled {
 		log.Info().Str("issue", issue.Key).Msg("running simplify pass")
-		simplifyResult, simplifyErr := worker.RunClaude(ctx, "/simplify", wtDir, h.m.cfg.TeammateModel)
+		simplifyResult, simplifyErr := claude.RunClaude(ctx, "/simplify", wtDir, h.m.cfg.TeammateModel)
 		if simplifyErr != nil {
 			log.Warn().Err(simplifyErr).Str("issue", issue.Key).Msg("simplify pass failed, continuing with PR")
 		} else if simplifyResult.ExitCode != 0 {
@@ -372,7 +352,7 @@ func (h *Handlers) transitionToImplementation(ctx context.Context, issue tracker
 
 	diff, _ := git.DiffFromMain(ctx, wtDir)
 	commitLog, _ := git.CommitLogFromMain(ctx, wtDir)
-	prDescPrompt, err := team.BuildPRDescriptionPrompt(
+	prDescPrompt, err := BuildPRDescriptionPrompt(
 		issue.Key, issue.Title, issue.Description,
 		"", diff, commitLog, h.m.cfg.BotDisplayName,
 	)
@@ -380,7 +360,7 @@ func (h *Handlers) transitionToImplementation(ctx context.Context, issue tracker
 		return fmt.Errorf("building PR description prompt: %w", err)
 	}
 
-	prDescResult, err := worker.RunClaudeText(ctx, prDescPrompt, wtDir, h.m.cfg.TeammateModel)
+	prDescResult, err := claude.RunClaudeText(ctx, prDescPrompt, wtDir, h.m.cfg.TeammateModel)
 	if err != nil {
 		return fmt.Errorf("generating PR description: %w", err)
 	}
@@ -404,12 +384,12 @@ func (h *Handlers) transitionToImplementation(ctx context.Context, issue tracker
 func (h *Handlers) answerQuestion(ctx context.Context, issue tracker.Issue, prNumber int, diff string, comment ghclient.PRComment) error {
 	log.Info().Str("issue", issue.Key).Int64("comment", comment.ID).Msg("answering question")
 
-	prompt, err := team.BuildAnswerQuestionPrompt(comment.Body, diff)
+	prompt, err := BuildAnswerQuestionPrompt(comment.Body, diff)
 	if err != nil {
 		return err
 	}
 
-	result, err := worker.RunClaude(ctx, prompt, h.m.cfg.TargetRepoPath, h.m.cfg.TeammateModel)
+	result, err := claude.RunClaude(ctx, prompt, h.m.cfg.TargetRepoPath, h.m.cfg.TeammateModel)
 	if err != nil {
 		return err
 	}
@@ -448,7 +428,7 @@ func (h *Handlers) addressCodeChanges(ctx context.Context, issue tracker.Issue, 
 	}
 
 	diff, _ := git.DiffFromMain(ctx, wtDir)
-	prompt, err := team.BuildAddressChangesPrompt(issue.Key, feedback, diff)
+	prompt, err := BuildAddressChangesPrompt(issue.Key, feedback, diff)
 	if err != nil {
 		return err
 	}
@@ -458,7 +438,7 @@ func (h *Handlers) addressCodeChanges(ctx context.Context, issue tracker.Issue, 
 		return nil
 	}
 
-	_, err = worker.RunClaude(ctx, prompt, wtDir, h.m.cfg.TeammateModel)
+	_, err = claude.RunClaude(ctx, prompt, wtDir, h.m.cfg.TeammateModel)
 	if err != nil {
 		return err
 	}
@@ -498,7 +478,7 @@ Comment: %q
 
 Respond with ONLY a JSON object: {"type": "code_change"} or {"type": "question"}`, body)
 
-	output, err := worker.RunClaudeQuick(ctx, prompt, model)
+	output, err := claude.RunClaudeQuick(ctx, prompt, model)
 	if err != nil {
 		return "code_change"
 	}
@@ -506,7 +486,7 @@ Respond with ONLY a JSON object: {"type": "code_change"} or {"type": "question"}
 	var result struct {
 		Type string `json:"type"`
 	}
-	if err := json.Unmarshal([]byte(worker.StripCodeFence(output)), &result); err != nil {
+	if err := json.Unmarshal([]byte(claude.StripCodeFence(output)), &result); err != nil {
 		return "code_change"
 	}
 	return result.Type
@@ -519,7 +499,7 @@ Comment: %q
 
 Respond with ONLY a JSON object: {"is_question": true} or {"is_question": false}`, body)
 
-	output, err := worker.RunClaudeQuick(ctx, prompt, model)
+	output, err := claude.RunClaudeQuick(ctx, prompt, model)
 	if err != nil {
 		return false
 	}
@@ -527,7 +507,7 @@ Respond with ONLY a JSON object: {"is_question": true} or {"is_question": false}
 	var result struct {
 		IsQuestion bool `json:"is_question"`
 	}
-	if err := json.Unmarshal([]byte(worker.StripCodeFence(output)), &result); err != nil {
+	if err := json.Unmarshal([]byte(claude.StripCodeFence(output)), &result); err != nil {
 		return false
 	}
 	return result.IsQuestion

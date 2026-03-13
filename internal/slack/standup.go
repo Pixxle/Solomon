@@ -8,9 +8,9 @@ import (
 	"github.com/rs/zerolog/log"
 	slackapi "github.com/slack-go/slack"
 
-	"github.com/pixxle/codehephaestus/internal/config"
-	"github.com/pixxle/codehephaestus/internal/db"
-	"github.com/pixxle/codehephaestus/internal/worker"
+	"github.com/pixxle/solomon/internal/config"
+	"github.com/pixxle/solomon/internal/db"
+	"github.com/pixxle/solomon/internal/claude"
 )
 
 // standupItem is the JSON shape passed to the standup prompt template.
@@ -96,7 +96,7 @@ func (s *StandupRunner) postStandup(ctx context.Context, now time.Time) error {
 	}
 	itemsJSON, _ := json.Marshal(items)
 
-	prompt, err := worker.RenderPrompt("standup.md.tmpl", map[string]interface{}{
+	prompt, err := claude.RenderPrompt("standup.md.tmpl", map[string]interface{}{
 		"Date":           now.Format("2006-01-02"),
 		"BotDisplayName": s.cfg.BotDisplayName,
 		"TicketData":     string(itemsJSON),
@@ -105,7 +105,7 @@ func (s *StandupRunner) postStandup(ctx context.Context, now time.Time) error {
 		return err
 	}
 
-	result, err := worker.RunClaudeText(ctx, prompt, s.cfg.TargetRepoPath, s.cfg.PlanningModel)
+	result, err := claude.RunClaudeText(ctx, prompt, s.cfg.TargetRepoPath, s.cfg.PlanningModel)
 	if err != nil {
 		return err
 	}

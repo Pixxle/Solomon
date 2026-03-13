@@ -72,8 +72,6 @@ type Config struct {
 	AgentTeamTimeout int
 
 	// Runtime
-	PollInterval   int
-	MaxIterations  int
 	TargetRepoPath string
 	WorktreePath   string
 	StateDBPath    string
@@ -102,13 +100,13 @@ func Load(envPath string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		BotDisplayName: envOrDefault("BOT_DISPLAY_NAME", "CodeHephaestus"),
+		BotDisplayName: envOrDefault("BOT_DISPLAY_NAME", "Solomon"),
 
 		TaskTracker:       TrackerType(envOrDefault("TASK_TRACKER", "jira")),
 		TrackerAPIKey:     os.Getenv("TRACKER_API_KEY"),
 		TrackerBaseURL:    os.Getenv("TRACKER_BASE_URL"),
 		TrackerProject:    os.Getenv("TRACKER_PROJECT"),
-		JiraPlanningLabel: envOrDefault("JIRA_PLANNING_LABEL", "codehephaestus"),
+		JiraPlanningLabel: envOrDefault("JIRA_PLANNING_LABEL", "solomon"),
 		JiraApprovalLabel: envOrDefault("JIRA_APPROVAL_LABEL", "approved"),
 		JiraEmail:         os.Getenv("JIRA_EMAIL"),
 
@@ -147,8 +145,6 @@ func Load(envPath string) (*Config, error) {
 		MaxUATRetries:    envOrDefaultInt("MAX_UAT_RETRIES", 3),
 		AgentTeamTimeout: envOrDefaultInt("AGENT_TEAM_TIMEOUT", 3600),
 
-		PollInterval:   envOrDefaultInt("POLL_INTERVAL", 120),
-		MaxIterations:  envOrDefaultInt("MAX_ITERATIONS", 0),
 		TargetRepoPath: envOrDefault("TARGET_REPO_PATH", "."),
 		WorktreePath:   os.Getenv("WORKTREE_PATH"),
 		StateDBPath:    os.Getenv("STATE_DB_PATH"),
@@ -162,7 +158,7 @@ func Load(envPath string) (*Config, error) {
 	}
 
 	if cfg.StateDBPath == "" {
-		cfg.StateDBPath = cfg.TargetRepoPath + "/.codehephaestus/state.db"
+		cfg.StateDBPath = cfg.TargetRepoPath + "/.solomon/state.db"
 	}
 
 	if err := cfg.validate(); err != nil {

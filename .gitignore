@@ -1,5 +1,6 @@
 .env
+solomon.yaml
 *.log
 .worktrees/
-.codehephaestus/
-codehephaestus
+.solomon/
+solomon

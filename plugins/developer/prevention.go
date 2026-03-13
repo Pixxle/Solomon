@@ -1,9 +1,9 @@
-package loop
+package developer
 
 import (
 	"time"
 
-	"github.com/pixxle/codehephaestus/internal/db"
+	"github.com/pixxle/solomon/internal/db"
 )
 
 const (

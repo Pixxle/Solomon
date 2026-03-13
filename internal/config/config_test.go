@@ -10,7 +10,7 @@ func TestBotSlug(t *testing.T) {
 		displayName string
 		want        string
 	}{
-		{"CodeHephaestus", "codehephaestus"},
+		{"Solomon", "solomon"},
 		{"My Cool Bot", "my-cool-bot"},
 		{"Bot 2.0!", "bot-20"},
 		{"UPPER CASE", "upper-case"},
@@ -176,7 +176,7 @@ func TestLoad_Defaults(t *testing.T) {
 	// Clear env vars that have defaults to test the defaults
 	for _, key := range []string{
 		"BOT_DISPLAY_NAME", "JIRA_PLANNING_LABEL", "JIRA_APPROVAL_LABEL",
-		"PLANNING_MODEL", "POLL_INTERVAL", "MAX_REVIEW_ROUNDS",
+		"PLANNING_MODEL", "MAX_REVIEW_ROUNDS",
 	} {
 		t.Setenv(key, "")
 	}
@@ -186,20 +186,17 @@ func TestLoad_Defaults(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if cfg.BotDisplayName != "CodeHephaestus" {
-		t.Errorf("BotDisplayName = %q, want %q", cfg.BotDisplayName, "CodeHephaestus")
+	if cfg.BotDisplayName != "Solomon" {
+		t.Errorf("BotDisplayName = %q, want %q", cfg.BotDisplayName, "Solomon")
 	}
-	if cfg.JiraPlanningLabel != "codehephaestus" {
-		t.Errorf("JiraPlanningLabel = %q, want %q", cfg.JiraPlanningLabel, "codehephaestus")
+	if cfg.JiraPlanningLabel != "solomon" {
+		t.Errorf("JiraPlanningLabel = %q, want %q", cfg.JiraPlanningLabel, "solomon")
 	}
 	if cfg.JiraApprovalLabel != "approved" {
 		t.Errorf("JiraApprovalLabel = %q, want %q", cfg.JiraApprovalLabel, "approved")
 	}
 	if cfg.PlanningModel != "sonnet" {
 		t.Errorf("PlanningModel = %q, want %q", cfg.PlanningModel, "sonnet")
-	}
-	if cfg.PollInterval != 120 {
-		t.Errorf("PollInterval = %d, want %d", cfg.PollInterval, 120)
 	}
 	if cfg.MaxReviewRounds != 3 {
 		t.Errorf("MaxReviewRounds = %d, want %d", cfg.MaxReviewRounds, 3)

@@ -1,0 +1,85 @@
+# Solomon configuration
+# Copy to solomon.yaml and fill in your values.
+# Environment variables can be referenced with ${VAR_NAME} syntax.
+
+global:
+  bot_display_name: Solomon
+  state_db_path: ""  # defaults to <first repo path>/.solomon/state.db
+  log_level: info     # debug, info, warn, error
+
+  claude:
+    max_concurrent: 2
+    team_lead_model: opus       # model for planning / orchestration
+    teammate_model: sonnet      # model for implementation agents
+    planning_model: sonnet      # model for security scan agents
+    agent_team_timeout: 3600    # seconds before agent team times out
+
+  slack:
+    bot_token: ${SLACK_BOT_TOKEN}
+    channel_id: ${SLACK_CHANNEL_ID}
+    standup_enabled: false
+    standup_hour: 9              # UTC hour for daily standup post
+    standup_channel_id: ""       # defaults to channel_id if empty
+
+  figma:
+    access_token: ${FIGMA_ACCESS_TOKEN}
+    export_scale: 2
+    export_format: png
+
+  planning:
+    reminder_days: 7             # days before unanswered questions trigger a reminder
+    timeout_action: remind       # remind | skip
+
+# Tracker boards (at least one required)
+boards:
+  - id: main
+    tracker: jira                # jira (linear planned)
+    base_url: ${JIRA_BASE_URL}   # e.g. https://yourorg.atlassian.net
+    project: ${JIRA_PROJECT}     # e.g. PROJ
+    email: ${JIRA_EMAIL}
+    api_key: ${JIRA_API_KEY}
+    labels:
+      planning: solomon   # label that marks tickets for the bot
+      approval: approved         # label that signals implementation approval
+    statuses:
+      todo: To Do
+      in_progress: In Progress
+      in_review: In Review
+      done: Done
+      cancelled: Cancelled
+
+# Git repositories
+repos:
+  - name: my-app
+    path: /path/to/my-app
+
+# Plugins
+plugins:
+  # Developer plugin — picks up Jira tickets and implements them
+  - type: developer
+    board: main
+    repos:
+      - name: my-app
+        label: ""                # optional: only handle tickets with this label
+    schedules:
+      - name: check
+        cron: "*/5 * * * *"      # poll every 5 minutes
+    settings:
+      auto_launch: true          # start implementation automatically after planning
+      max_review_rounds: 3
+      max_ci_fix_attempts: 3
+      max_uat_retries: 2
+
+  # Security engineer plugin — runs automated security audits
+  - type: securityengineer
+    board: main
+    repos:
+      - name: my-app
+    schedules:
+      - name: full
+        cron: "0 2 * * 1"       # full scan every Monday at 2 AM
+      - name: quick
+        cron: "0 12 * * *"      # quick scan daily at noon
+    settings:
+      parallel_agents: 4         # number of concurrent security agents
+      jira_threshold: HIGH       # create Jira tickets for findings at this severity and above (CRITICAL, HIGH, MEDIUM, LOW)

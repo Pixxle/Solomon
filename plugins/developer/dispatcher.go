@@ -1,4 +1,4 @@
-package loop
+package developer
 
 import (
 	"context"
@@ -8,13 +8,11 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/pixxle/codehephaestus/internal/config"
-	"github.com/pixxle/codehephaestus/internal/db"
-	"github.com/pixxle/codehephaestus/internal/git"
-	ghclient "github.com/pixxle/codehephaestus/internal/github"
-	"github.com/pixxle/codehephaestus/internal/planning"
-	"github.com/pixxle/codehephaestus/internal/statemachine"
-	"github.com/pixxle/codehephaestus/internal/tracker"
+	"github.com/pixxle/solomon/internal/config"
+	"github.com/pixxle/solomon/internal/db"
+	"github.com/pixxle/solomon/internal/git"
+	ghclient "github.com/pixxle/solomon/internal/github"
+	"github.com/pixxle/solomon/internal/tracker"
 )
 
 const githubBotSuffix = "[bot]"
@@ -43,16 +41,14 @@ func NewPriorityDispatcher(cfg *config.Config, t tracker.TaskTracker, gh *ghclie
 	}
 }
 
-// FindWork returns the highest-priority work item, or nil if there's nothing to do.
-func (pd *PriorityDispatcher) FindWork(ctx context.Context) (*statemachine.WorkItem, error) {
-	// Pre-fetch shared data to avoid duplicate API calls.
+func (pd *PriorityDispatcher) FindWork(ctx context.Context) (*WorkItem, error) {
 	allStates, err := pd.stateDB.GetAllPlanningStates()
 	if err != nil {
 		log.Warn().Err(err).Msg("error fetching planning states")
 	}
 	var activePlans []*db.PlanningState
 	for _, ps := range allStates {
-		if ps.Status == planning.StatusActive {
+		if ps.Status == StatusActive {
 			activePlans = append(activePlans, ps)
 		}
 	}
@@ -65,14 +61,12 @@ func (pd *PriorityDispatcher) FindWork(ctx context.Context) (*statemachine.WorkI
 		todoMap[i.Key] = i
 	}
 
-	// Reconcile tracker state periodically (every 5 minutes, not every poll cycle).
 	if time.Since(pd.lastReconcileCheck) >= 5*time.Minute {
 		pd.reconcileTrackerState(ctx, allStates, todoMap)
 		pd.adoptUnknownAssignedIssues(ctx)
 		pd.lastReconcileCheck = time.Now()
 	}
 
-	// Record done tickets periodically (every 10 minutes, not every poll cycle).
 	if time.Since(pd.lastDoneCheck) >= 10*time.Minute {
 		pd.recordDoneTickets(ctx)
 		pd.lastDoneCheck = time.Now()
@@ -114,7 +108,7 @@ func (pd *PriorityDispatcher) FindWork(ctx context.Context) (*statemachine.WorkI
 	return nil, nil
 }
 
-func (pd *PriorityDispatcher) checkPlanningConversations(_ context.Context, activePlans []*db.PlanningState, todoMap map[string]tracker.Issue) (*statemachine.WorkItem, error) {
+func (pd *PriorityDispatcher) checkPlanningConversations(_ context.Context, activePlans []*db.PlanningState, todoMap map[string]tracker.Issue) (*WorkItem, error) {
 	for _, ps := range activePlans {
 		issue, ok := todoMap[ps.IssueKey]
 		if !ok {
@@ -124,10 +118,9 @@ func (pd *PriorityDispatcher) checkPlanningConversations(_ context.Context, acti
 			continue
 		}
 
-		// Trigger when the description has changed since last analysis
-		if planning.DescriptionChanged(issue.Description, ps.LastSeenDescription) {
-			return &statemachine.WorkItem{
-				State: statemachine.StatePlanning,
+		if DescriptionChanged(issue.Description, ps.LastSeenDescription) {
+			return &WorkItem{
+				State: StatePlanning,
 				Issue: issue,
 				Context: map[string]interface{}{
 					"planning_state": ps,
@@ -139,7 +132,7 @@ func (pd *PriorityDispatcher) checkPlanningConversations(_ context.Context, acti
 	return nil, nil
 }
 
-func (pd *PriorityDispatcher) checkReviewFeedback(ctx context.Context) (*statemachine.WorkItem, error) {
+func (pd *PriorityDispatcher) checkReviewFeedback(ctx context.Context) (*WorkItem, error) {
 	inReviewIssues, err := pd.tracker.FetchIssuesByStatus(ctx, pd.cfg.StatusInReview())
 	if err != nil {
 		return nil, err
@@ -174,7 +167,6 @@ func (pd *PriorityDispatcher) checkReviewFeedback(ctx context.Context) (*statema
 			if pd.loopPrev.IsCommentProcessed(commentIDStr) {
 				continue
 			}
-			// Filter out bot's own comments and GitHub app bots
 			if (pd.ghUsername != "" && c.Author == pd.ghUsername) || strings.HasSuffix(c.Author, githubBotSuffix) {
 				pd.recordSkippedBot(issue.Key, prNumber, c)
 				continue
@@ -185,8 +177,8 @@ func (pd *PriorityDispatcher) checkReviewFeedback(ctx context.Context) (*statema
 			continue
 		}
 
-		return &statemachine.WorkItem{
-			State: statemachine.StateInReview,
+		return &WorkItem{
+			State: StateInReview,
 			Issue: issue,
 			Context: map[string]interface{}{
 				"comments":  unprocessed,
@@ -199,7 +191,7 @@ func (pd *PriorityDispatcher) checkReviewFeedback(ctx context.Context) (*statema
 	return nil, nil
 }
 
-func (pd *PriorityDispatcher) checkCIFailures(ctx context.Context) (*statemachine.WorkItem, error) {
+func (pd *PriorityDispatcher) checkCIFailures(ctx context.Context) (*WorkItem, error) {
 	inProgressIssues, err := pd.tracker.FetchIssuesByStatus(ctx, pd.cfg.StatusInProgress())
 	if err != nil {
 		return nil, err
@@ -221,8 +213,8 @@ func (pd *PriorityDispatcher) checkCIFailures(ctx context.Context) (*statemachin
 			continue
 		}
 
-		return &statemachine.WorkItem{
-			State: statemachine.StateCIFailure,
+		return &WorkItem{
+			State: StateCIFailure,
 			Issue: issue,
 			Context: map[string]interface{}{
 				"pr_number": prNumber,
@@ -234,7 +226,7 @@ func (pd *PriorityDispatcher) checkCIFailures(ctx context.Context) (*statemachin
 	return nil, nil
 }
 
-func (pd *PriorityDispatcher) checkPlanningReady(ctx context.Context, activePlans []*db.PlanningState, todoMap map[string]tracker.Issue) (*statemachine.WorkItem, error) {
+func (pd *PriorityDispatcher) checkPlanningReady(ctx context.Context, activePlans []*db.PlanningState, todoMap map[string]tracker.Issue) (*WorkItem, error) {
 	for _, ps := range activePlans {
 		issue, ok := todoMap[ps.IssueKey]
 		if !ok {
@@ -244,7 +236,6 @@ func (pd *PriorityDispatcher) checkPlanningReady(ctx context.Context, activePlan
 			continue
 		}
 
-		// Check for explicit ready signal from human
 		ready, err := pd.tracker.IsReadySignal(ctx, issue, ps.BotCommentID)
 		if err != nil {
 			log.Warn().Err(err).Str("issue", issue.Key).Msg("error checking ready signal")
@@ -255,8 +246,8 @@ func (pd *PriorityDispatcher) checkPlanningReady(ctx context.Context, activePlan
 				log.Debug().Str("issue", issue.Key).Msg("ready signal detected but issue not assigned to bot, staying in planning")
 				continue
 			}
-			return &statemachine.WorkItem{
-				State: statemachine.StatePlanningReady,
+			return &WorkItem{
+				State: StatePlanningReady,
 				Issue: issue,
 				Context: map[string]interface{}{
 					"planning_state": ps,
@@ -264,11 +255,10 @@ func (pd *PriorityDispatcher) checkPlanningReady(ctx context.Context, activePlan
 			}, nil
 		}
 
-		// Check for auto-launch: both phases complete + assigned + config enabled
-		if planning.AutoLaunchReady(pd.cfg.AutoLaunchImplementation, pd.botUserID, issue, ps) {
+		if AutoLaunchReady(pd.cfg.AutoLaunchImplementation, pd.botUserID, issue, ps) {
 			log.Info().Str("issue", issue.Key).Msg("auto-launch conditions met: both planning phases complete and ticket assigned")
-			return &statemachine.WorkItem{
-				State: statemachine.StatePlanningReady,
+			return &WorkItem{
+				State: StatePlanningReady,
 				Issue: issue,
 				Context: map[string]interface{}{
 					"planning_state": ps,
@@ -280,10 +270,7 @@ func (pd *PriorityDispatcher) checkPlanningReady(ctx context.Context, activePlan
 	return nil, nil
 }
 
-func (pd *PriorityDispatcher) checkNewIssues(allStates []*db.PlanningState, todoIssues []tracker.Issue) *statemachine.WorkItem {
-	// Build set of issues that already have ANY planning state (not just active).
-	// This prevents emitting StateTodo for issues with stale/complete rows that
-	// haven't been cleaned up by reconciliation yet.
+func (pd *PriorityDispatcher) checkNewIssues(allStates []*db.PlanningState, todoIssues []tracker.Issue) *WorkItem {
 	hasPlanning := make(map[string]bool, len(allStates))
 	for _, ps := range allStates {
 		hasPlanning[ps.IssueKey] = true
@@ -297,8 +284,8 @@ func (pd *PriorityDispatcher) checkNewIssues(allStates []*db.PlanningState, todo
 			continue
 		}
 
-		return &statemachine.WorkItem{
-			State: statemachine.StateTodo,
+		return &WorkItem{
+			State: StateTodo,
 			Issue: issue,
 		}
 	}
@@ -320,9 +307,6 @@ func (pd *PriorityDispatcher) recordSkippedBot(issueKey string, prNumber int, c 
 	}
 }
 
-// recordDoneTickets finds issues in "Done" status assigned to the bot that
-// have no existing DB record, and inserts a "complete" planning state so
-// they are never picked up as new work.
 func (pd *PriorityDispatcher) recordDoneTickets(ctx context.Context) {
 	doneIssues, err := pd.tracker.FetchIssuesByStatus(ctx, pd.cfg.StatusDone())
 	if err != nil {
@@ -348,7 +332,7 @@ func (pd *PriorityDispatcher) recordDoneTickets(ctx context.Context) {
 			IssueKey:         issue.Key,
 			ConversationJSON: db.EmptyJSONArray,
 			ParticipantsJSON: db.EmptyJSONArray,
-			Status:           planning.StatusComplete,
+			Status:           StatusComplete,
 			CreatedAt:        now,
 			UpdatedAt:        now,
 		}
@@ -360,19 +344,11 @@ func (pd *PriorityDispatcher) recordDoneTickets(ctx context.Context) {
 	}
 }
 
-// reconcileTrackerState detects when humans move tickets on the tracker board
-// and fixes stale bot state. Two rules:
-//   - Rule 1: Issue is in TODO but has a non-active planning_state → reopened.
-//     Delete old state + bot comment + close PR so planning starts fresh.
-//   - Rule 2: Issue is NOT in TODO but has an active planning_state → moved out.
-//     Mark planning complete (stale).
 func (pd *PriorityDispatcher) reconcileTrackerState(ctx context.Context, allStates []*db.PlanningState, todoMap map[string]tracker.Issue) {
 	for _, ps := range allStates {
 		issue, inTodo := todoMap[ps.IssueKey]
 
-		if inTodo && ps.Status != planning.StatusActive {
-			// Rule 1: reopened ticket — clear old state so it starts fresh.
-			// Also close any open PR and clean up the worktree/branch.
+		if inTodo && ps.Status != StatusActive {
 			pd.cleanupPRForIssue(ctx, issue)
 			if ready, _ := pd.tracker.IsReadySignal(ctx, issue, ps.BotCommentID); ready {
 				if err := pd.tracker.ClearReadySignal(ctx, ps.IssueKey); err != nil {
@@ -389,9 +365,8 @@ func (pd *PriorityDispatcher) reconcileTrackerState(ctx context.Context, allStat
 				continue
 			}
 			log.Info().Str("issue", ps.IssueKey).Str("old_status", ps.Status).Msg("reconcile: cleared stale state for reopened ticket")
-		} else if !inTodo && ps.Status == planning.StatusActive {
-			// Rule 2: moved out of TODO — mark planning complete.
-			ps.Status = planning.StatusComplete
+		} else if !inTodo && ps.Status == StatusActive {
+			ps.Status = StatusComplete
 			if err := pd.stateDB.UpdatePlanningState(ps); err != nil {
 				log.Error().Err(err).Str("issue", ps.IssueKey).Msg("reconcile: failed to mark planning complete")
 				continue
@@ -401,8 +376,6 @@ func (pd *PriorityDispatcher) reconcileTrackerState(ctx context.Context, allStat
 	}
 }
 
-// cleanupPRForIssue closes any open PR and cleans up the worktree/branch for an issue.
-// Best-effort: logs warnings on failure but does not return errors.
 func (pd *PriorityDispatcher) cleanupPRForIssue(ctx context.Context, issue tracker.Issue) {
 	branch := pd.tracker.GetIssueBranchName(issue, pd.cfg.BotSlug())
 	prNumber, err := pd.github.FindOpenPRForBranch(ctx, branch)
@@ -426,11 +399,6 @@ func (pd *PriorityDispatcher) cleanupPRForIssue(ctx context.Context, issue track
 	}
 }
 
-// adoptUnknownAssignedIssues detects issues assigned to the bot in non-TODO
-// statuses (In Progress, In Review) that have no planning state — meaning the
-// bot didn't create them. It moves them back to TODO so they enter the normal
-// planning flow. Uses live DB lookups per issue to avoid stale snapshot issues
-// (e.g. when recordDoneTickets inserts rows in the same cycle).
 func (pd *PriorityDispatcher) adoptUnknownAssignedIssues(ctx context.Context) {
 	for _, status := range []string{pd.cfg.StatusInProgress(), pd.cfg.StatusInReview()} {
 		issues, err := pd.tracker.FetchIssuesByStatus(ctx, status)

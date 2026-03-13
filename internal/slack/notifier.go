@@ -5,8 +5,8 @@ import (
 
 	slackapi "github.com/slack-go/slack"
 
-	"github.com/pixxle/codehephaestus/internal/config"
-	"github.com/pixxle/codehephaestus/internal/db"
+	"github.com/pixxle/solomon/internal/config"
+	"github.com/pixxle/solomon/internal/db"
 )
 
 // Notifier sends lifecycle notifications for ticket processing.
@@ -22,6 +22,7 @@ type Notifier interface {
 	NotifyReviewFeedback(ctx context.Context, issueKey string, prNumber int) error
 	NotifyPRMerged(ctx context.Context, issueKey string, prNumber int) error
 	NotifyJailbreakDetected(ctx context.Context, issueKey, source, reason string) error
+	NotifySecurityScanComplete(ctx context.Context, repoName string, newFindings, openFindings, mitigatedFindings int) error
 }
 
 // NoopNotifier is a no-op implementation used when Slack is disabled or in dry-run mode.
@@ -40,6 +41,9 @@ func (n *NoopNotifier) NotifyCIFailure(context.Context, string, int) error      
 func (n *NoopNotifier) NotifyReviewFeedback(context.Context, string, int) error   { return nil }
 func (n *NoopNotifier) NotifyPRMerged(context.Context, string, int) error         { return nil }
 func (n *NoopNotifier) NotifyJailbreakDetected(context.Context, string, string, string) error {
+	return nil
+}
+func (n *NoopNotifier) NotifySecurityScanComplete(context.Context, string, int, int, int) error {
 	return nil
 }
 

@@ -1,4 +1,4 @@
-package worker
+package claude
 
 import (
 	"bytes"
@@ -115,7 +115,6 @@ func RunClaudeAgentTeam(ctx context.Context, prompt, workingDir, model string, t
 }
 
 // RunClaudeText runs a claude --print session for pure text generation (no tool use).
-// Used for PR descriptions and other tasks that don't need to read/edit files or run commands.
 func RunClaudeText(ctx context.Context, prompt, workingDir, model string) (*ClaudeResult, error) {
 	args := []string{"--print", "--max-turns", "1"}
 	if model != "" {

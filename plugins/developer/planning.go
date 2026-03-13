@@ -1,4 +1,4 @@
-package planning
+package developer
 
 import (
 	"context"
@@ -12,13 +12,13 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/pixxle/codehephaestus/internal/config"
-	"github.com/pixxle/codehephaestus/internal/db"
-	"github.com/pixxle/codehephaestus/internal/figma"
-	"github.com/pixxle/codehephaestus/internal/guardrails"
-	"github.com/pixxle/codehephaestus/internal/slack"
-	"github.com/pixxle/codehephaestus/internal/tracker"
-	"github.com/pixxle/codehephaestus/internal/worker"
+	"github.com/pixxle/solomon/internal/claude"
+	"github.com/pixxle/solomon/internal/config"
+	"github.com/pixxle/solomon/internal/db"
+	"github.com/pixxle/solomon/internal/figma"
+	"github.com/pixxle/solomon/internal/guardrails"
+	"github.com/pixxle/solomon/internal/slack"
+	"github.com/pixxle/solomon/internal/tracker"
 )
 
 // DescriptionChanged reports whether the issue description differs from the last analyzed version.
@@ -39,7 +39,6 @@ const (
 	PhaseTechnical = "technical"
 )
 
-// resolvePhase returns the effective phase, defaulting to PhaseProduct for empty values.
 func resolvePhase(phase string) string {
 	if phase == "" {
 		return PhaseProduct
@@ -51,7 +50,7 @@ type Planner struct {
 	cfg       *config.Config
 	tracker   tracker.TaskTracker
 	stateDB   *db.StateDB
-	figma     *figma.Client // may be nil
+	figma     *figma.Client
 	botUserID string
 	notifier  slack.Notifier
 }
@@ -67,29 +66,23 @@ func NewPlanner(cfg *config.Config, t tracker.TaskTracker, stateDB *db.StateDB, 
 	}
 }
 
-// StartPlanning begins the planning conversation for a new issue.
-// Starts with the product requirements refinement phase.
 func (p *Planner) StartPlanning(ctx context.Context, issue tracker.Issue) error {
 	log.Info().Str("issue", issue.Key).Msg("starting planning conversation (product requirements phase)")
 
-	// Save images from attachments and Figma to disk
 	images, err := p.collectImages(ctx, issue)
 	if err != nil {
 		log.Warn().Err(err).Str("issue", issue.Key).Msg("failed to collect images")
 	}
 
-	// Extract Figma URLs
 	figmaURLs := figma.ExtractFigmaURLs(issue.Description)
 	figmaURLsJSON, _ := json.Marshal(figmaURLs)
 	imageRefsJSON, _ := json.Marshal(images)
 
-	// Scan issue description for jailbreak attempts before sending to LLM
 	if err := p.scanDescription(ctx, issue.Key, issue.Description, "description"); err != nil {
 		return err
 	}
 
-	// Generate initial product requirements comment via claude
-	prompt, err := worker.RenderPrompt("planning_initial.md.tmpl", map[string]interface{}{
+	prompt, err := claude.RenderPrompt("planning_initial.md.tmpl", map[string]interface{}{
 		"IssueKey":         issue.Key,
 		"IssueTitle":       issue.Title,
 		"Description":      issue.Description,
@@ -101,22 +94,16 @@ func (p *Planner) StartPlanning(ctx context.Context, issue tracker.Issue) error 
 		return fmt.Errorf("rendering planning prompt: %w", err)
 	}
 
-	result, err := worker.RunClaude(ctx, prompt, p.cfg.TargetRepoPath, p.cfg.PlanningModel)
+	result, err := claude.RunClaude(ctx, prompt, p.cfg.TargetRepoPath, p.cfg.PlanningModel)
 	if err != nil {
 		return fmt.Errorf("running planning claude: %w", err)
 	}
 
-	// Strip any preamble text that leaks from tool use in --print mode
 	cleanOutput := stripPreamble(result.Output, p.cfg.BotDisplayName)
-
-	// Parse questions from AI output
 	questions := parseQuestions(cleanOutput)
 	questionsJSON, _ := json.Marshal(questions)
-
-	// Ensure heading reflects question state
 	output := ensureCorrectProductHeading(cleanOutput, len(questions) == 0, p.cfg.BotDisplayName)
 
-	// Post the comment and capture its ID
 	var botCommentID string
 	if !p.cfg.DryRun {
 		commentID, err := p.tracker.AddCommentReturningID(ctx, issue.Key, output)
@@ -155,7 +142,6 @@ func (p *Planner) StartPlanning(ctx context.Context, issue tracker.Issue) error 
 		_ = p.notifier.NotifyQuestions(ctx, issue.Key, PhaseProduct, len(questions))
 	}
 
-	// If the initial analysis produced no open questions, auto-transition to technical phase
 	if len(questions) == 0 {
 		log.Info().Str("issue", issue.Key).Msg("product requirements complete on initial analysis, transitioning to technical refinement")
 		return p.transitionToTechnicalPhase(ctx, issue, ps, output)
@@ -164,32 +150,25 @@ func (p *Planner) StartPlanning(ctx context.Context, issue tracker.Issue) error 
 	return nil
 }
 
-// ContinuePlanning re-analyzes when the issue description has changed.
-// Uses phase-appropriate prompts and handles automatic phase transitions.
 func (p *Planner) ContinuePlanning(ctx context.Context, issue tracker.Issue, ps *db.PlanningState) error {
-	// Only act if the description changed
 	if !DescriptionChanged(issue.Description, ps.LastSeenDescription) {
 		return nil
 	}
 
 	phase := resolvePhase(ps.PlanningPhase)
 
-	// Load open questions
 	var openQuestions []string
 	_ = json.Unmarshal([]byte(ps.QuestionsJSON), &openQuestions)
 
-	// Scan updated description for jailbreak attempts
 	if err := p.scanDescription(ctx, issue.Key, issue.Description, "updated description"); err != nil {
 		return err
 	}
 
-	// Select the appropriate follow-up template based on phase
 	templateName := "planning_followup.md.tmpl"
 	if phase == PhaseTechnical {
 		templateName = "planning_technical_followup.md.tmpl"
 	}
 
-	// Generate follow-up via claude
 	templateData := map[string]interface{}{
 		"IssueKey":            issue.Key,
 		"IssueTitle":          issue.Title,
@@ -202,23 +181,19 @@ func (p *Planner) ContinuePlanning(ctx context.Context, issue tracker.Issue, ps 
 	if phase == PhaseTechnical {
 		templateData["ProductSummary"] = ps.ProductSummary
 	}
-	prompt, err := worker.RenderPrompt(templateName, templateData)
+	prompt, err := claude.RenderPrompt(templateName, templateData)
 	if err != nil {
 		return fmt.Errorf("rendering follow-up prompt: %w", err)
 	}
 
-	result, err := worker.RunClaude(ctx, prompt, p.cfg.TargetRepoPath, p.cfg.PlanningModel)
+	result, err := claude.RunClaude(ctx, prompt, p.cfg.TargetRepoPath, p.cfg.PlanningModel)
 	if err != nil {
 		return fmt.Errorf("running planning follow-up: %w", err)
 	}
 
-	// Strip any preamble text that leaks from tool use in --print mode
 	cleanOutput := stripPreamble(result.Output, p.cfg.BotDisplayName)
-
-	// Parse remaining questions from output
 	remainingQuestions := parseQuestions(cleanOutput)
 
-	// During technical phase, check if the AI flagged product requirements gaps
 	if phase == PhaseTechnical {
 		productGaps := parseProductGaps(cleanOutput)
 		if len(productGaps) > 0 {
@@ -228,7 +203,6 @@ func (p *Planner) ContinuePlanning(ctx context.Context, issue tracker.Issue, ps 
 
 	questionsJSON, _ := json.Marshal(remainingQuestions)
 
-	// Ensure heading reflects question state based on phase
 	var output string
 	if phase == PhaseTechnical {
 		output = ensureCorrectTechnicalHeading(cleanOutput, len(remainingQuestions) == 0, p.cfg.BotDisplayName)
@@ -238,20 +212,17 @@ func (p *Planner) ContinuePlanning(ctx context.Context, issue tracker.Issue, ps 
 
 	p.updateBotComment(ctx, issue.Key, ps, output)
 
-	// Update state
 	now := time.Now().UTC()
 	ps.LastSeenDescription = issue.Description
 	ps.QuestionsJSON = string(questionsJSON)
 	ps.LastSystemCommentAt = &now
 
-	// Check for automatic phase transition: product → technical
 	if phase == PhaseProduct && len(remainingQuestions) == 0 {
 		log.Info().Str("issue", issue.Key).Msg("product requirements complete, transitioning to technical refinement")
 		_ = p.notifier.NotifyQuestionsResolved(ctx, issue.Key, PhaseProduct)
 		return p.transitionToTechnicalPhase(ctx, issue, ps, output)
 	}
 
-	// Notify when technical phase has 0 remaining questions
 	if phase == PhaseTechnical && len(remainingQuestions) == 0 {
 		_ = p.notifier.NotifyQuestionsResolved(ctx, issue.Key, PhaseTechnical)
 	}
@@ -264,8 +235,6 @@ func (p *Planner) ContinuePlanning(ctx context.Context, issue tracker.Issue, ps 
 	return nil
 }
 
-// transitionToTechnicalPhase mutates ps to reflect the product→technical
-// transition, persists it, and kicks off StartTechnicalRefinement.
 func (p *Planner) transitionToTechnicalPhase(ctx context.Context, issue tracker.Issue, ps *db.PlanningState, productSummary string) error {
 	ps.ProductSummary = productSummary
 	ps.PlanningPhase = PhaseTechnical
@@ -276,16 +245,13 @@ func (p *Planner) transitionToTechnicalPhase(ctx context.Context, issue tracker.
 	return p.StartTechnicalRefinement(ctx, issue, ps)
 }
 
-// StartTechnicalRefinement begins the technical refinement phase.
-// Called automatically when product requirements are complete.
 func (p *Planner) StartTechnicalRefinement(ctx context.Context, issue tracker.Issue, ps *db.PlanningState) error {
 	log.Info().Str("issue", issue.Key).Msg("starting technical refinement phase")
 
 	var images []string
 	_ = json.Unmarshal([]byte(ps.ImageRefsJSON), &images)
 
-	// Generate technical refinement comment via claude
-	prompt, err := worker.RenderPrompt("planning_technical_initial.md.tmpl", map[string]interface{}{
+	prompt, err := claude.RenderPrompt("planning_technical_initial.md.tmpl", map[string]interface{}{
 		"IssueKey":         issue.Key,
 		"IssueTitle":       issue.Title,
 		"Description":      issue.Description,
@@ -298,14 +264,13 @@ func (p *Planner) StartTechnicalRefinement(ctx context.Context, issue tracker.Is
 		return fmt.Errorf("rendering technical planning prompt: %w", err)
 	}
 
-	result, err := worker.RunClaude(ctx, prompt, p.cfg.TargetRepoPath, p.cfg.PlanningModel)
+	result, err := claude.RunClaude(ctx, prompt, p.cfg.TargetRepoPath, p.cfg.PlanningModel)
 	if err != nil {
 		return fmt.Errorf("running technical planning claude: %w", err)
 	}
 
 	cleanOutput := stripPreamble(result.Output, p.cfg.BotDisplayName)
 
-	// Check if the initial technical analysis immediately found product gaps
 	productGaps := parseProductGaps(cleanOutput)
 	if len(productGaps) > 0 {
 		return p.revertToProductPhase(ctx, issue, ps, productGaps)
@@ -335,48 +300,33 @@ func (p *Planner) StartTechnicalRefinement(ctx context.Context, issue tracker.Is
 	return nil
 }
 
-// IsProductPhaseComplete returns true if the planning is in the technical phase
-// (meaning product refinement has already completed).
 func IsProductPhaseComplete(ps *db.PlanningState) bool {
 	return ps.PlanningPhase == PhaseTechnical
 }
 
-// IsTechnicalPhaseComplete returns true if the planning is in the technical phase
-// and there are no remaining open questions.
 func IsTechnicalPhaseComplete(ps *db.PlanningState) bool {
 	return ps.PlanningPhase == PhaseTechnical && isEmptyJSONArray(ps.QuestionsJSON)
 }
 
-// isEmptyJSONArray checks if a JSON string represents an empty or absent array
-// without allocating or parsing.
 func isEmptyJSONArray(s string) bool {
 	return s == db.EmptyJSONArray || s == "" || s == "null"
 }
 
-// CheckReadySignal detects if a human has signalled readiness for implementation.
 func (p *Planner) CheckReadySignal(ctx context.Context, issue tracker.Issue, ps *db.PlanningState) (bool, error) {
 	return p.tracker.IsReadySignal(ctx, issue, ps.BotCommentID)
 }
 
-// ShouldAutoLaunch returns true if auto-launch is configured and conditions are met:
-// the ticket is assigned to the bot, product refinement is done, and technical refinement
-// has no open questions.
 func (p *Planner) ShouldAutoLaunch(issue tracker.Issue, ps *db.PlanningState) bool {
 	return AutoLaunchReady(p.cfg.AutoLaunchImplementation, p.botUserID, issue, ps)
 }
 
-// AutoLaunchReady is the package-level predicate for auto-launch conditions.
-// Shared by the dispatcher and the handler to avoid duplicating the condition.
 func AutoLaunchReady(autoLaunchEnabled bool, botUserID string, issue tracker.Issue, ps *db.PlanningState) bool {
 	return autoLaunchEnabled && issue.IsAssignedTo(botUserID) && IsTechnicalPhaseComplete(ps)
 }
 
-// CompletePlanning finalizes the planning phase. The description IS the spec,
-// so we update the bot's comment to indicate implementation has begun.
 func (p *Planner) CompletePlanning(ctx context.Context, issue tracker.Issue, ps *db.PlanningState) error {
 	log.Info().Str("issue", issue.Key).Msg("completing planning phase")
 
-	// Update the bot's comment to indicate implementation is starting
 	if !p.cfg.DryRun && ps.BotCommentID != "" {
 		finalComment := fmt.Sprintf("## %s — Implementation Started\n\nAll product and technical refinement questions have been resolved. Implementation has begun based on the current issue description.",
 			p.cfg.BotDisplayName)
@@ -385,8 +335,6 @@ func (p *Planner) CompletePlanning(ctx context.Context, issue tracker.Issue, ps 
 		}
 	}
 
-	// Clear the ready signal (best-effort, no-op if absent).
-	// The caller has already confirmed the signal or auto-launch condition.
 	if err := p.tracker.ClearReadySignal(ctx, issue.Key); err != nil {
 		log.Warn().Err(err).Str("issue", issue.Key).Msg("failed to clear ready signal after completing planning")
 	}
@@ -400,9 +348,6 @@ func (p *Planner) CompletePlanning(ctx context.Context, issue tracker.Issue, ps 
 	return nil
 }
 
-// CheckTimeout checks if a planning conversation has timed out.
-// Uses LastSystemCommentAt (when the bot last analyzed) since the
-// description-centric flow doesn't track human comment timestamps.
 func (p *Planner) CheckTimeout(ctx context.Context, issue tracker.Issue, ps *db.PlanningState) error {
 	if ps.LastSystemCommentAt == nil {
 		return nil
@@ -433,15 +378,12 @@ func (p *Planner) CheckTimeout(ctx context.Context, issue tracker.Issue, ps *db.
 	return nil
 }
 
-// parseQuestions extracts numbered items from the ### Open Questions section.
 var questionsRe = regexp.MustCompile(`(?m)^\d+\.\s+(.+)`)
 
 func parseQuestions(output string) []string {
 	return parseSection(output, "### Open Questions")
 }
 
-// parseProductGaps extracts numbered items from the ### Product Requirements Gaps section.
-// When present during technical refinement, this triggers a transition back to product phase.
 func parseProductGaps(output string) []string {
 	return parseSection(output, "### Product Requirements Gaps")
 }
@@ -452,7 +394,6 @@ func parseSection(output, heading string) []string {
 		return nil
 	}
 
-	// Extract text until the next ### heading or end of string
 	rest := output[sectionStart+len(heading):]
 	nextSection := strings.Index(rest, "\n### ")
 	if nextSection != -1 {
@@ -473,13 +414,12 @@ func parseSection(output, heading string) []string {
 func (p *Planner) collectImages(ctx context.Context, issue tracker.Issue) ([]string, error) {
 	var imagePaths []string
 
-	// Download tracker attachments
 	attachments, err := p.tracker.GetAttachments(ctx, issue.Key)
 	if err != nil {
 		return nil, err
 	}
 
-	imgDir := filepath.Join(p.cfg.TargetRepoPath, ".codehephaestus", "images", issue.Key)
+	imgDir := filepath.Join(p.cfg.TargetRepoPath, ".solomon", "images", issue.Key)
 	if err := os.MkdirAll(imgDir, 0o755); err != nil {
 		return nil, err
 	}
@@ -501,7 +441,6 @@ func (p *Planner) collectImages(ctx context.Context, issue tracker.Issue) ([]str
 		imagePaths = append(imagePaths, path)
 	}
 
-	// Export Figma frames
 	if p.figma != nil {
 		figmaURLs := figma.ExtractFigmaURLs(issue.Description)
 		for _, fu := range figmaURLs {
@@ -525,9 +464,6 @@ func (p *Planner) collectImages(ctx context.Context, issue tracker.Issue) ([]str
 	return imagePaths, nil
 }
 
-// revertToProductPhase transitions the issue back from technical to product refinement
-// when the AI identifies product requirement gaps. It generates a clean product refinement
-// comment that preserves the existing product summary and lists the gaps as open questions.
 func (p *Planner) revertToProductPhase(ctx context.Context, issue tracker.Issue, ps *db.PlanningState, productGaps []string) error {
 	log.Info().Str("issue", issue.Key).Int("product_gaps", len(productGaps)).
 		Msg("product requirements gaps detected during technical refinement, reverting to product phase")
@@ -541,8 +477,6 @@ func (p *Planner) revertToProductPhase(ctx context.Context, issue tracker.Issue,
 	ps.PlanningPhase = PhaseProduct
 	ps.LastSystemCommentAt = &now
 
-	// Build a clean product refinement comment that includes the prior product
-	// summary for context and lists the newly discovered gaps as open questions.
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("## %s — Product Requirements Refinement\n\n", p.cfg.BotDisplayName))
 	sb.WriteString("### Context\n")
@@ -550,7 +484,6 @@ func (p *Planner) revertToProductPhase(ctx context.Context, issue tracker.Issue,
 
 	if ps.ProductSummary != "" {
 		sb.WriteString("### Previous Product Decisions\n")
-		// Extract the body from the previous product summary (skip the heading)
 		summary := ps.ProductSummary
 		if idx := strings.Index(summary, "\n"); idx >= 0 {
 			summary = strings.TrimSpace(summary[idx:])
@@ -575,7 +508,6 @@ func (p *Planner) revertToProductPhase(ctx context.Context, issue tracker.Issue,
 	return nil
 }
 
-// updateBotComment updates the bot's comment in-place, falling back to a new comment if update fails.
 func (p *Planner) updateBotComment(ctx context.Context, issueKey string, ps *db.PlanningState, content string) {
 	if p.cfg.DryRun {
 		return
@@ -600,9 +532,6 @@ func (p *Planner) updateBotComment(ctx context.Context, issueKey string, ps *db.
 	}
 }
 
-// stripPreamble removes any text before the expected heading.
-// When claude --print is used with tool use, intermediate text output
-// (e.g. "Let me read the images...") leaks into stdout before the actual comment.
 func stripPreamble(output, botName string) string {
 	marker := fmt.Sprintf("## %s — ", botName)
 	idx := strings.Index(output, marker)
@@ -612,8 +541,6 @@ func stripPreamble(output, botName string) string {
 	return output
 }
 
-// ensureCorrectHeading fixes the comment heading to match the question state.
-// activeLabel/completeLabel are the heading suffixes (e.g. "Product Requirements Refinement" / "Product Requirements Complete").
 func ensureCorrectHeading(output string, noQuestions bool, botName, activeLabel, completeLabel string) string {
 	active := fmt.Sprintf("## %s — %s\n", botName, activeLabel)
 	complete := fmt.Sprintf("## %s — %s\n", botName, completeLabel)
@@ -632,8 +559,6 @@ func ensureCorrectTechnicalHeading(output string, noQuestions bool, botName stri
 	return ensureCorrectHeading(output, noQuestions, botName, "Technical Refinement", "Technical Refinement Complete")
 }
 
-// scanDescription runs a jailbreak scan on issue description content.
-// Returns an error if a jailbreak attempt is detected (blocking the calling operation).
 func (p *Planner) scanDescription(ctx context.Context, issueKey, content, label string) error {
 	source := fmt.Sprintf("issue %s %s", issueKey, label)
 	scan := guardrails.ScanForJailbreak(ctx, content, source, p.cfg.PlanningModel)

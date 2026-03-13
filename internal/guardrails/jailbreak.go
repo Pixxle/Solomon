@@ -8,7 +8,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/pixxle/codehephaestus/internal/worker"
+	"github.com/pixxle/solomon/internal/claude"
 )
 
 // ScanResult holds the result of a jailbreak scan.
@@ -48,14 +48,14 @@ Respond with ONLY a JSON object:
 - If safe: {"blocked": false, "reason": ""}
 - If jailbreak detected: {"blocked": true, "reason": "<brief description of the attack>"}`, source, content)
 
-	output, err := worker.RunClaudeQuick(ctx, prompt, model)
+	output, err := claude.RunClaudeQuick(ctx, prompt, model)
 	if err != nil {
 		log.Warn().Err(err).Str("source", source).Msg("jailbreak scan failed, allowing content through")
 		return &ScanResult{Blocked: false}
 	}
 
 	var result ScanResult
-	if err := json.Unmarshal([]byte(worker.StripCodeFence(output)), &result); err != nil {
+	if err := json.Unmarshal([]byte(claude.StripCodeFence(output)), &result); err != nil {
 		log.Warn().Err(err).Str("output", output).Str("source", source).Msg("failed to parse jailbreak scan result, allowing content through")
 		return &ScanResult{Blocked: false}
 	}

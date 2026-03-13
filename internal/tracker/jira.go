@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pixxle/codehephaestus/internal/config"
+	"github.com/pixxle/solomon/internal/config"
 )
 
 type JiraTracker struct {
@@ -517,6 +517,40 @@ func (j *JiraTracker) ClearReadySignal(ctx context.Context, issueKey string) err
 		return fmt.Errorf("removing approval label failed (status %d): %s", resp.StatusCode, string(respBody))
 	}
 	return nil
+}
+
+func (j *JiraTracker) CreateIssue(ctx context.Context, title, description string, labels []string) (string, error) {
+	payload := map[string]interface{}{
+		"fields": map[string]interface{}{
+			"project":   map[string]string{"key": j.project},
+			"summary":   title,
+			"issuetype": map[string]string{"name": "Task"},
+			"description": textToADF(description),
+			"labels":      labels,
+		},
+	}
+	b, _ := json.Marshal(payload)
+	req, err := j.newRequest(ctx, "POST", "/rest/api/3/issue", bytes.NewReader(b))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := j.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("creating issue failed (status %d): %s", resp.StatusCode, string(respBody))
+	}
+	var result struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decoding create issue response: %w", err)
+	}
+	return result.Key, nil
 }
 
 func (j *JiraTracker) newRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {

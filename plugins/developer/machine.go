@@ -1,4 +1,4 @@
-package statemachine
+package developer
 
 import (
 	"context"
@@ -6,14 +6,12 @@ import (
 
 	"github.com/rs/zerolog/log"
 
-	"github.com/pixxle/codehephaestus/internal/config"
-	"github.com/pixxle/codehephaestus/internal/db"
-	"github.com/pixxle/codehephaestus/internal/figma"
-	ghclient "github.com/pixxle/codehephaestus/internal/github"
-	"github.com/pixxle/codehephaestus/internal/planning"
-	"github.com/pixxle/codehephaestus/internal/slack"
-	"github.com/pixxle/codehephaestus/internal/team"
-	"github.com/pixxle/codehephaestus/internal/tracker"
+	"github.com/pixxle/solomon/internal/config"
+	"github.com/pixxle/solomon/internal/db"
+	"github.com/pixxle/solomon/internal/figma"
+	ghclient "github.com/pixxle/solomon/internal/github"
+	"github.com/pixxle/solomon/internal/slack"
+	"github.com/pixxle/solomon/internal/tracker"
 )
 
 // Machine routes work items to the correct state handler.
@@ -22,8 +20,8 @@ type Machine struct {
 	tracker    tracker.TaskTracker
 	github     *ghclient.Client
 	stateDB    *db.StateDB
-	planner    *planning.Planner
-	teamLaunch *team.Launcher
+	planner    *Planner
+	teamLaunch *Launcher
 	botUserID  string
 	notifier   slack.Notifier
 	handlers   *Handlers
@@ -38,8 +36,8 @@ func NewMachine(
 	botUserID string,
 	notifier slack.Notifier,
 ) *Machine {
-	planner := planning.NewPlanner(cfg, t, stateDB, figmaClient, botUserID, notifier)
-	launcher := team.NewLauncher(cfg)
+	planner := NewPlanner(cfg, t, stateDB, figmaClient, botUserID, notifier)
+	launcher := NewLauncher(cfg)
 
 	m := &Machine{
 		cfg:        cfg,
@@ -55,12 +53,10 @@ func NewMachine(
 	return m
 }
 
-// Handlers returns the handlers for housekeeping operations.
 func (m *Machine) Handlers() *Handlers {
 	return m.handlers
 }
 
-// Handle dispatches a work item to the appropriate handler based on its current state.
 func (m *Machine) Handle(ctx context.Context, item *WorkItem) error {
 	log.Info().
 		Str("issue", item.Issue.Key).
@@ -81,12 +77,4 @@ func (m *Machine) Handle(ctx context.Context, item *WorkItem) error {
 	default:
 		return fmt.Errorf("no handler for state %q", item.State)
 	}
-}
-
-// WorkItem is a unit of work identified by the priority dispatcher,
-// tagged with the internal state the issue is in.
-type WorkItem struct {
-	State   State
-	Issue   tracker.Issue
-	Context map[string]interface{}
 }
