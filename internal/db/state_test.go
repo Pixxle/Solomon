@@ -408,3 +408,223 @@ func TestPruneOldRecords(t *testing.T) {
 		t.Fatalf("PruneOldRecords(0) error: %v", err)
 	}
 }
+
+func TestHasOpenQuestions(t *testing.T) {
+	tests := []struct {
+		name string
+		json string
+		want bool
+	}{
+		{"empty string", "", false},
+		{"empty array", "[]", false},
+		{"null", "null", false},
+		{"with questions", `["Q1?","Q2?"]`, true},
+		{"single question", `["Q?"]`, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ps := &PlanningState{QuestionsJSON: tt.json}
+			if got := ps.HasOpenQuestions(); got != tt.want {
+				t.Errorf("HasOpenQuestions() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSecurityFindingCRUD(t *testing.T) {
+	db := openTestDB(t)
+
+	// Create a scan first
+	scan := &SecurityScan{
+		RepoName:   "test-repo",
+		CommitHash: "abc123",
+		ScanType:   "full",
+		Status:     "running",
+	}
+	if err := db.CreateSecurityScan(scan); err != nil {
+		t.Fatalf("CreateSecurityScan() error: %v", err)
+	}
+	scanID := scan.ID
+	if scanID <= 0 {
+		t.Fatalf("scanID = %d, want > 0", scanID)
+	}
+
+	// Upsert a finding
+	f := &SecurityFinding{
+		RepoName:        "test-repo",
+		ScanID:          scanID,
+		Agent:           "sast",
+		FindingID:       "f1",
+		Title:           "SQL Injection",
+		Severity:        "HIGH",
+		Confidence:      "HIGH",
+		Priority:        "P1",
+		Status:          "open",
+		Fingerprint:     "fp-001",
+		FirstSeenScanID: scanID,
+		LastSeenScanID:  scanID,
+	}
+	if err := db.UpsertSecurityFinding(f); err != nil {
+		t.Fatalf("UpsertSecurityFinding() error: %v", err)
+	}
+
+	// Get open findings
+	open, err := db.GetOpenSecurityFindings("test-repo")
+	if err != nil {
+		t.Fatalf("GetOpenSecurityFindings() error: %v", err)
+	}
+	if len(open) != 1 {
+		t.Fatalf("open findings = %d, want 1", len(open))
+	}
+	if open[0].Title != "SQL Injection" {
+		t.Errorf("Title = %q, want %q", open[0].Title, "SQL Injection")
+	}
+
+	// Upsert same fingerprint (dedup)
+	f.ScanID = scanID + 1
+	f.LastSeenScanID = scanID + 1
+	if err := db.UpsertSecurityFinding(f); err != nil {
+		t.Fatalf("UpsertSecurityFinding(dedup) error: %v", err)
+	}
+	open, _ = db.GetOpenSecurityFindings("test-repo")
+	if len(open) != 1 {
+		t.Errorf("open after dedup = %d, want 1", len(open))
+	}
+
+	// Update Jira key
+	if err := db.UpdateSecurityFindingJiraKey(open[0].ID, "SEC-1"); err != nil {
+		t.Fatalf("UpdateSecurityFindingJiraKey() error: %v", err)
+	}
+
+	// Mark mitigated
+	if err := db.MarkSecurityFindingMitigated(open[0].ID, scanID+2); err != nil {
+		t.Fatalf("MarkSecurityFindingMitigated() error: %v", err)
+	}
+
+	// Get mitigated with Jira
+	mitigated, err := db.GetMitigatedSecurityFindingsWithJira("test-repo")
+	if err != nil {
+		t.Fatalf("GetMitigatedSecurityFindingsWithJira() error: %v", err)
+	}
+	if len(mitigated) != 1 {
+		t.Fatalf("mitigated with jira = %d, want 1", len(mitigated))
+	}
+	if mitigated[0].JiraIssueKey != "SEC-1" {
+		t.Errorf("JiraIssueKey = %q, want SEC-1", mitigated[0].JiraIssueKey)
+	}
+
+	// Open should now be empty
+	open, _ = db.GetOpenSecurityFindings("test-repo")
+	if len(open) != 0 {
+		t.Errorf("open after mitigate = %d, want 0", len(open))
+	}
+}
+
+func TestSecurityEpicKey(t *testing.T) {
+	db := openTestDB(t)
+
+	key, err := db.GetSecurityEpicKey("test-repo")
+	if err != nil {
+		t.Fatalf("GetSecurityEpicKey() error: %v", err)
+	}
+	if key != "" {
+		t.Errorf("initial epic key = %q, want empty", key)
+	}
+
+	if err := db.SetSecurityEpicKey("test-repo", "SEC-100"); err != nil {
+		t.Fatalf("SetSecurityEpicKey() error: %v", err)
+	}
+
+	key, err = db.GetSecurityEpicKey("test-repo")
+	if err != nil {
+		t.Fatalf("GetSecurityEpicKey() after set error: %v", err)
+	}
+	if key != "SEC-100" {
+		t.Errorf("epic key = %q, want SEC-100", key)
+	}
+}
+
+func TestSlackThread(t *testing.T) {
+	db := openTestDB(t)
+
+	ts, err := db.GetSlackThread("TEST-1")
+	if err != nil {
+		t.Fatalf("GetSlackThread() error: %v", err)
+	}
+	if ts != "" {
+		t.Errorf("initial thread ts = %q, want empty", ts)
+	}
+
+	if err := db.UpsertSlackThread("TEST-1", "123.456"); err != nil {
+		t.Fatalf("UpsertSlackThread() error: %v", err)
+	}
+
+	ts, err = db.GetSlackThread("TEST-1")
+	if err != nil {
+		t.Fatalf("GetSlackThread() after upsert error: %v", err)
+	}
+	if ts != "123.456" {
+		t.Errorf("thread ts = %q, want 123.456", ts)
+	}
+}
+
+func TestStandupTime(t *testing.T) {
+	db := openTestDB(t)
+
+	last, err := db.GetLastStandupTime()
+	if err != nil {
+		t.Fatalf("GetLastStandupTime() error: %v", err)
+	}
+	if !last.IsZero() {
+		t.Errorf("initial standup time = %v, want zero", last)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := db.SetLastStandupTime(now); err != nil {
+		t.Fatalf("SetLastStandupTime() error: %v", err)
+	}
+
+	last, err = db.GetLastStandupTime()
+	if err != nil {
+		t.Fatalf("GetLastStandupTime() after set error: %v", err)
+	}
+	if !last.Equal(now) {
+		t.Errorf("standup time = %v, want %v", last, now)
+	}
+}
+
+func TestGetPlanningStatesUpdatedSince(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Now().UTC()
+
+	if err := db.InsertPlanningState(&PlanningState{
+		IssueKey:            "SINCE-1",
+		ConversationJSON:    "[]",
+		ParticipantsJSON:    "[]",
+		Status:              "active",
+		FigmaURLsJSON:       "[]",
+		ImageRefsJSON:       "[]",
+		CreatedAt:           now,
+		UpdatedAt:           now,
+		LastSeenDescription: "",
+		QuestionsJSON:       "[]",
+	}); err != nil {
+		t.Fatalf("InsertPlanningState() error: %v", err)
+	}
+
+	states, err := db.GetPlanningStatesUpdatedSince(now.Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("GetPlanningStatesUpdatedSince() error: %v", err)
+	}
+	if len(states) != 1 {
+		t.Errorf("states = %d, want 1", len(states))
+	}
+
+	states, err = db.GetPlanningStatesUpdatedSince(now.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("GetPlanningStatesUpdatedSince(future) error: %v", err)
+	}
+	if len(states) != 0 {
+		t.Errorf("states from future = %d, want 0", len(states))
+	}
+}
