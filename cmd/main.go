@@ -28,6 +28,9 @@ import (
 	_ "github.com/pixxle/solomon/plugins/securityengineer"
 )
 
+// version is set at build time via -ldflags.
+var version = "dev"
+
 func main() {
 	configPath := flag.String("config", "solomon.yaml", "path to solomon.yaml config file")
 	dryRun := flag.Bool("dry-run", false, "log actions without executing side effects")
