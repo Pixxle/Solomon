@@ -126,6 +126,17 @@ func main() {
 		}
 	}
 
+	// Resolve tracker user identity (e.g. Jira accountId) so that
+	// IsAssignedTo checks compare the correct identifier.
+	if trk != nil {
+		if trackerUID, err := trk.ResolveCurrentUser(context.Background()); err != nil {
+			log.Warn().Err(err).Msg("could not resolve tracker user identity — assignment detection may not work")
+		} else {
+			botUserID = trackerUID
+			log.Info().Str("tracker_user", trackerUID).Msg("resolved tracker identity")
+		}
+	}
+
 	// Shared libraries for plugins.
 	libs := &plugin.SharedLibs{
 		Config:      cfg,

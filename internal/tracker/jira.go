@@ -48,20 +48,8 @@ func NewJiraTracker(cfg *config.Config) (*JiraTracker, error) {
 }
 
 func (j *JiraTracker) ValidateConnection(ctx context.Context) error {
-	req, err := j.newRequest(ctx, "GET", "/rest/api/3/myself", nil)
-	if err != nil {
-		return err
-	}
-	resp, err := j.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("connecting to Jira: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("Jira auth failed (status %d): %s", resp.StatusCode, string(body))
-	}
-	return nil
+	_, err := j.ResolveCurrentUser(ctx)
+	return err
 }
 
 func (j *JiraTracker) ResolveCurrentUser(ctx context.Context) (string, error) {
