@@ -6,10 +6,10 @@ toolchain go1.26.3
 
 require (
 	github.com/joho/godotenv v1.5.1
-	github.com/mattn/go-sqlite3 v1.14.52
+	github.com/mattn/go-sqlite3 v1.14.53
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/rs/zerolog v1.35.1
-	github.com/slack-go/slack v0.32.0
+	github.com/slack-go/slack v0.35.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
