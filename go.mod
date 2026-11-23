@@ -9,7 +9,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.53
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/rs/zerolog v1.35.1
-	github.com/slack-go/slack v0.35.0
+	github.com/slack-go/slack v0.36.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
